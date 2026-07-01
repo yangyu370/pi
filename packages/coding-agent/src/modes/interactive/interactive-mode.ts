@@ -133,6 +133,7 @@ import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
 import { getModelSearchText } from "./model-search.ts";
+import { InteractiveApprovalProvider } from "./permission-approval-provider.ts";
 import {
 	getAvailableThemes,
 	getAvailableThemesWithPaths,
@@ -378,6 +379,7 @@ export class InteractiveMode {
 	private options: InteractiveModeOptions;
 	private autoTrustOnReloadCwd: string | undefined;
 	private themeController: InteractiveThemeController;
+	private approvalProvider: InteractiveApprovalProvider | undefined;
 
 	// Convenience accessors
 	private get session(): AgentSession {
@@ -393,18 +395,26 @@ export class InteractiveMode {
 		return this.session.settingsManager;
 	}
 
+	private installApprovalProvider(): void {
+		this.approvalProvider = new InteractiveApprovalProvider(this.ui);
+		this.session.setApprovalProvider(this.approvalProvider);
+	}
+
 	constructor(runtimeHost: AgentSessionRuntime, options: InteractiveModeOptions = {}) {
 		this.runtimeHost = runtimeHost;
 		this.options = options;
 		this.autoTrustOnReloadCwd = options.autoTrustOnReloadCwd;
 		this.runtimeHost.setBeforeSessionInvalidate(() => {
+			this.approvalProvider?.abortPending();
 			this.resetExtensionUI();
 		});
 		this.runtimeHost.setRebindSession(async () => {
+			this.installApprovalProvider();
 			await this.rebindCurrentSession({ renderBeforeBind: true });
 		});
 		this.version = VERSION;
 		this.ui = new TUI(new ProcessTerminal(), this.settingsManager.getShowHardwareCursor());
+		this.installApprovalProvider();
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
 		this.headerContainer = new Container();
 		this.loadedResourcesContainer = new Container();
@@ -3802,6 +3812,7 @@ export class InteractiveMode {
 		if (allQueued.length === 0) {
 			this.updatePendingMessagesDisplay();
 			if (options?.abort) {
+				this.approvalProvider?.abortPending();
 				this.agent.abort();
 			}
 			return 0;
@@ -3812,6 +3823,7 @@ export class InteractiveMode {
 		this.editor.setText(combinedText);
 		this.updatePendingMessagesDisplay();
 		if (options?.abort) {
+			this.approvalProvider?.abortPending();
 			this.agent.abort();
 		}
 		return allQueued.length;
@@ -5707,6 +5719,7 @@ export class InteractiveMode {
 	}
 
 	stop(): void {
+		this.approvalProvider?.abortPending();
 		if (this.settingsManager.getShowTerminalProgress()) {
 			this.ui.terminal.setProgress(false);
 		}
