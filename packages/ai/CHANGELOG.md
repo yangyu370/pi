@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added 白极 (Whitepolar) provider (OpenAI-compatible proxy at `https://whitepolar.app/v1`) with `WHITEPOLAR_API_KEY` env var and GPT-5.5 model support.
+
 ## [0.80.3] - 2026-06-30
 
 ### Added

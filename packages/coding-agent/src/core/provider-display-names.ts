@@ -25,6 +25,7 @@ export const BUILT_IN_PROVIDER_DISPLAY_NAMES: Record<string, string> = {
 	openrouter: "OpenRouter",
 	together: "Together AI",
 	"vercel-ai-gateway": "Vercel AI Gateway",
+	whitepolar: "白极 (Whitepolar)",
 	xai: "xAI",
 	zai: "ZAI Coding Plan (Global)",
 	"zai-coding-cn": "ZAI Coding Plan (China)",
