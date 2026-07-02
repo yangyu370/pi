@@ -34,6 +34,68 @@ describe("analyzeBashCommand", () => {
 	it("extracts simple read file args", () => {
 		expect(analyzeBashCommand("cat .env")[0].readPaths).toContain(".env");
 	});
+	it("normalizedCommand collapses redundant whitespace", () => {
+		expect(analyzeBashCommand("ls   -la    /tmp")[0].normalizedCommand).toBe("ls -la /tmp");
+	});
+	it("extracts mutate targets for mv and cp", () => {
+		expect(analyzeBashCommand("mv a b")[0].mutatePaths).toEqual(["a", "b"]);
+		expect(analyzeBashCommand("cp a b")[0].mutatePaths).toEqual(["a", "b"]);
+	});
+});
+
+describe("analyzeBashCommand — quoting (regression: double quotes do not suppress command substitution)", () => {
+	it("double-quoted $() / backtick command substitution is high-risk, not read-only", () => {
+		const sub = analyzeBashCommand('echo "$(rm -rf /)"');
+		expect(sub).toHaveLength(1);
+		expect(sub[0].highRiskReason).toBeTruthy();
+		expect(sub[0].readonly).toBe(false);
+
+		const backtick = analyzeBashCommand('echo "`rm -rf /`"');
+		expect(backtick).toHaveLength(1);
+		expect(backtick[0].highRiskReason).toBeTruthy();
+		expect(backtick[0].readonly).toBe(false);
+	});
+	it("single quotes stay fully literal — no command substitution detected", () => {
+		const a = analyzeBashCommand("echo '$(rm -rf /)'");
+		expect(a).toHaveLength(1);
+		expect(a[0].highRiskReason).toBeFalsy();
+		expect(a[0].readonly).toBe(true);
+	});
+	it("double-quoted && does not split into multiple accesses", () => {
+		const a = analyzeBashCommand('echo "a && b"');
+		expect(a).toHaveLength(1);
+		expect(a[0].command).toBe('echo "a && b"');
+	});
+});
+
+describe("analyzeBashCommand — redirection (regression)", () => {
+	it("top-level redirection is high-risk and never read-only", () => {
+		const r = analyzeBashCommand("echo x > f");
+		expect(r).toHaveLength(1);
+		expect(r[0].highRiskReason).toBeTruthy();
+		expect(r[0].readonly).toBe(false);
+		expect(analyzeBashCommand("echo x >> f")[0].highRiskReason).toBeTruthy();
+		expect(analyzeBashCommand("ls 2> err")[0].highRiskReason).toBeTruthy();
+		expect(analyzeBashCommand("cat < f")[0].highRiskReason).toBeTruthy();
+	});
+	it("redirect operator and target do not leak into readPaths/mutatePaths", () => {
+		const c = analyzeBashCommand("cat a > b");
+		expect(c[0].readPaths).toEqual([]);
+		expect(c[0].mutatePaths).toEqual([]);
+	});
+});
+
+describe("analyzeBashCommand — path extraction (regression: flag values / grep pattern must not leak)", () => {
+	it("value-consuming flags of head/tail do not leak their values", () => {
+		expect(analyzeBashCommand("head -n 5 file.txt")[0].readPaths).toEqual(["file.txt"]);
+		expect(analyzeBashCommand("tail -c 100 log.txt")[0].readPaths).toEqual(["log.txt"]);
+	});
+	it("grep drops its search pattern and -A/-B/-C/-m/-e values", () => {
+		expect(analyzeBashCommand("grep -A 3 pat file.txt")[0].readPaths).toEqual(["file.txt"]);
+		expect(analyzeBashCommand("grep pat file.txt")[0].readPaths).toEqual(["file.txt"]);
+		// -e supplies the pattern, so the first positional is a real file, not the pattern
+		expect(analyzeBashCommand("grep -e pat file.txt")[0].readPaths).toEqual(["file.txt"]);
+	});
 });
 
 // Additional coverage for the two helpers the brief exports explicitly "for reuse/tests"

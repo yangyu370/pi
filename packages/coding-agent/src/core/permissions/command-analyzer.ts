@@ -11,12 +11,15 @@
  *   default: ask); `find -exec`/`find -delete` are always high-risk.
  * - Top-level compound commands split only on `&&`, `||`, `;`, newline,
  *   outside quotes. A top-level pipe / subshell / command-substitution /
- *   backtick substitution / background `&` / unparseable quoting anywhere in
- *   the command degrades the WHOLE command to a single high-risk,
- *   non-readonly access instead of being split or read-only-classified —
- *   Phase 1 does not reason about pipelines/subshells per-branch (known
- *   tradeoff: `cat x | grep y` asks even though both sides are read-only;
- *   see spec §11.1).
+ *   backtick substitution / background `&` / shell redirection
+ *   (`>`,`>>`,`<`,`2>`,...) / unparseable quoting anywhere in the command
+ *   degrades the WHOLE command to a single high-risk, non-readonly access
+ *   instead of being split or read-only-classified. Command substitution is
+ *   detected even inside double quotes — bash still expands `$(...)` and
+ *   backticks there — while single quotes stay fully literal. Phase 1 does
+ *   not reason about pipelines/subshells per-branch (known tradeoff:
+ *   `cat x | grep y` asks even though both sides are read-only; see spec
+ *   §11.1).
  * - `rm`/`rmdir` targeting `/`, the home dir (`~`/`$HOME`), or a key system
  *   path trips the circuit breaker. This is a pure string function (no
  *   cwd/home passed in), so only literal forms are recognized — an absolute
@@ -150,9 +153,12 @@ function normalizeWhitespace(text: string): string {
 /**
  * Scans a full (possibly compound) bash command once, tracking single/double
  * quote state, to find top-level split points (`&&`, `||`, `;`, newline)
- * outside any quotes, AND any top-level high-risk shell structure (pipe,
- * subshell, command substitution, backtick substitution, background `&`) or
- * unbalanced/unparseable quoting anywhere in the command.
+ * outside any quotes, AND any high-risk shell structure: pipe, subshell,
+ * command substitution `$(...)`, backtick substitution, background `&`, or
+ * shell redirection (`>`, `>>`, `<`, `2>`, ...). Command substitution is
+ * detected ANYWHERE — including inside double quotes, which in bash still
+ * expand `$(...)`/`` `...` `` (single quotes stay fully literal). Unbalanced
+ * quoting is reported as unparseable.
  *
  * If `highRiskReason` comes back set, the caller must ignore `segments`
  * entirely and treat the whole original command as one opaque unit (spec
@@ -178,7 +184,17 @@ function splitTopLevel(command: string): { highRiskReason?: string; segments: st
 		const ch = command[i];
 		if (quote) {
 			current += ch;
-			if (ch === quote) quote = undefined;
+			if (ch === quote) {
+				quote = undefined;
+			} else if (quote === '"') {
+				// Double quotes suppress word-splitting and operators but NOT command
+				// substitution: bash still expands `$(...)` and backticks inside them.
+				if (ch === "`") {
+					highRiskReason ??= "command substitution (`...`) inside double quotes";
+				} else if (ch === "$" && command[i + 1] === "(") {
+					highRiskReason ??= "command substitution $(...) inside double quotes";
+				}
+			}
 			i++;
 			continue;
 		}
@@ -218,6 +234,15 @@ function splitTopLevel(command: string): { highRiskReason?: string; segments: st
 				continue;
 			}
 			highRiskReason ??= "top-level background execution (&)";
+			current += ch;
+			i++;
+			continue;
+		}
+		if (ch === ">" || ch === "<") {
+			// Any unquoted `>`/`<` is redirection (covers `>`, `>>`, `>|`, `>&`,
+			// `2>`, `<`, `<<`, process substitution); it moves data to/from files
+			// and must never be auto-classified read-only.
+			highRiskReason ??= `shell redirection (${ch})`;
 			current += ch;
 			i++;
 			continue;
@@ -274,9 +299,50 @@ function criticalPathReason(target: string): string | undefined {
 }
 
 /**
+ * Flags that consume the FOLLOWING token as their value, per program, so the
+ * value is not mistaken for a file path. Only the read-only commands whose
+ * value-taking flags the analyzer cares about are listed (spec §12 path
+ * extraction). Attached forms (`-n5`, `-A3`) already read as plain flags and
+ * consume no following token.
+ */
+const VALUE_CONSUMING_FLAGS: Record<string, ReadonlySet<string>> = {
+	head: new Set(["-n", "-c"]),
+	tail: new Set(["-n", "-c"]),
+	grep: new Set(["-A", "-B", "-C", "-m", "-e"]),
+};
+
+/**
+ * Extracts simple file-path arguments from a command's tokens, skipping flags
+ * and the values consumed by known value-taking flags (see
+ * VALUE_CONSUMING_FLAGS). For `grep`, the search pattern is not a file: it is
+ * the value of `-e`, or — absent `-e` — the first positional token, which is
+ * dropped so only real files remain.
+ */
+function extractPathArgs(program: string, args: readonly Token[]): string[] {
+	const valueFlags = VALUE_CONSUMING_FLAGS[program];
+	const paths: string[] = [];
+	let patternFromFlag = false;
+	for (let i = 0; i < args.length; i++) {
+		const token = args[i];
+		if (token.value.startsWith("-")) {
+			if (valueFlags?.has(token.value)) {
+				if (program === "grep" && token.value === "-e") patternFromFlag = true;
+				i++; // consume this flag's value token
+			}
+			continue;
+		}
+		paths.push(token.value);
+	}
+	if (program === "grep" && !patternFromFlag && paths.length > 0) {
+		paths.shift(); // leading positional is the search pattern, not a file
+	}
+	return paths;
+}
+
+/**
  * Analyzes one already top-level-split subcommand. Guaranteed free of
- * top-level pipe/subshell/substitution/backtick/background — those are
- * handled by {@link splitTopLevel} before this is ever called.
+ * top-level pipe/subshell/substitution/backtick/background/redirection —
+ * those are handled by {@link splitTopLevel} before this is ever called.
  */
 function analyzeSingleCommand(segment: string): CommandAccess {
 	const command = segment.trim();
@@ -289,7 +355,7 @@ function analyzeSingleCommand(segment: string): CommandAccess {
 
 	const program = tokens[0].value;
 	const args = tokens.slice(1);
-	const nonFlagValues = args.filter((t) => !t.value.startsWith("-")).map((t) => t.value);
+	const pathArgs = extractPathArgs(program, args);
 	const bareGlob = args.find((t) => !t.quoted && GLOB_CHARS_RE.test(t.value));
 
 	let highRiskReason: string | undefined;
@@ -304,7 +370,7 @@ function analyzeSingleCommand(segment: string): CommandAccess {
 
 	let circuitBreakerReason: string | undefined;
 	if (CIRCUIT_BREAKER_PROGRAMS.has(program)) {
-		for (const value of nonFlagValues) {
+		for (const value of pathArgs) {
 			circuitBreakerReason = criticalPathReason(value);
 			if (circuitBreakerReason) break;
 		}
@@ -317,8 +383,8 @@ function analyzeSingleCommand(segment: string): CommandAccess {
 	return {
 		command,
 		normalizedCommand,
-		readPaths: READ_PATH_COMMANDS.has(program) ? nonFlagValues : [],
-		mutatePaths: MUTATE_PATH_COMMANDS.has(program) ? nonFlagValues : [],
+		readPaths: READ_PATH_COMMANDS.has(program) ? pathArgs : [],
+		mutatePaths: MUTATE_PATH_COMMANDS.has(program) ? pathArgs : [],
 		readonly,
 		circuitBreakerReason,
 		highRiskReason,
@@ -330,8 +396,9 @@ function analyzeSingleCommand(segment: string): CommandAccess {
  * `CommandAccess` per top-level subcommand. Pure and dependency-free; never
  * throws.
  *
- * Top-level structural risk (pipe `|`, subshell/command-substitution
- * `(...)`, backtick substitution, background `&`, or unbalanced/unparseable
+ * High-risk structure (pipe `|`, subshell/command-substitution `(...)` /
+ * `$(...)` — including inside double quotes — backtick substitution,
+ * background `&`, shell redirection `>`/`<`, or unbalanced/unparseable
  * quoting) anywhere in `command` short-circuits: the whole original command
  * is returned as a SINGLE high-risk, non-readonly access instead of being
  * split (spec §11.1).
