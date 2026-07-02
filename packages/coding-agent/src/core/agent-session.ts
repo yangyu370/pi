@@ -165,6 +165,8 @@ export interface AgentSessionConfig {
 	sessionManager: SessionManager;
 	settingsManager: SettingsManager;
 	cwd: string;
+	/** Agent config dir for permission storage; falls back to getAgentDir() so an SDK-injected dir wins. */
+	agentDir?: string;
 	/** Models to cycle through with Ctrl+P (from --models flag) */
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
 	/** Resource loader for skills, prompts, themes, context files, system prompt */
@@ -362,7 +364,7 @@ export class AgentSession {
 
 		if (this.settingsManager.getPermissionsEnabled()) {
 			this._permissions = new PermissionService({
-				agentDir: getAgentDir(),
+				agentDir: config.agentDir ?? getAgentDir(),
 				cwd: this._cwd,
 				enabled: true,
 				isTrusted: () => this.settingsManager.isProjectTrusted(),

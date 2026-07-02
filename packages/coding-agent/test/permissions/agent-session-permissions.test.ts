@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ENV_AGENT_DIR } from "../../src/config.ts";
 import type { AgentSession } from "../../src/core/agent-session.ts";
 import { PermissionService, type PermissionServiceConfig } from "../../src/core/permissions/service.ts";
 import type { Rule } from "../../src/core/permissions/types.ts";
@@ -11,6 +10,7 @@ import { DefaultResourceLoader } from "../../src/core/resource-loader.ts";
 import { createAgentSession } from "../../src/core/sdk.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
+import { createTestExtensionsResult, createTestResourceLoader } from "../utilities.ts";
 import { FakeApprovalProvider } from "./fake-approval-provider.ts";
 
 type GateResult = { block?: boolean; reason?: string } | undefined;
@@ -24,7 +24,7 @@ class RecordingRunner {
 		this.handlers = handlers;
 		this.result = result;
 	}
-	hasHandlers(): boolean {
+	hasHandlers(_eventType: string): boolean {
 		return this.handlers;
 	}
 	emitToolCall(payload: unknown): Promise<GateResult> {
@@ -51,7 +51,7 @@ function makeGate(permissions: PermissionService | undefined, runner: RecordingR
 			const outcome = await permissions.evaluate(toolCall, args);
 			if (outcome) return outcome;
 		}
-		if (!runner.hasHandlers()) {
+		if (!runner.hasHandlers("tool_call")) {
 			return undefined;
 		}
 		return runner.emitToolCall({
@@ -67,7 +67,6 @@ describe("AgentSession permission wiring", () => {
 	let tempDir: string;
 	let agentDir: string;
 	let cwd: string;
-	let prevAgentDirEnv: string | undefined;
 
 	beforeEach(() => {
 		tempDir = join(tmpdir(), `pi-perm-wiring-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -75,14 +74,9 @@ describe("AgentSession permission wiring", () => {
 		cwd = join(tempDir, "project");
 		mkdirSync(agentDir, { recursive: true });
 		mkdirSync(cwd, { recursive: true });
-		// Pin getAgentDir() (used by the session-constructed service) to the temp dir.
-		prevAgentDirEnv = process.env[ENV_AGENT_DIR];
-		process.env[ENV_AGENT_DIR] = agentDir;
 	});
 
 	afterEach(() => {
-		if (prevAgentDirEnv === undefined) delete process.env[ENV_AGENT_DIR];
-		else process.env[ENV_AGENT_DIR] = prevAgentDirEnv;
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
@@ -225,14 +219,46 @@ describe("AgentSession permission wiring", () => {
 			expect(provider.requests).toHaveLength(1);
 		});
 
-		it("passes through to the extension runner when permissions are disabled", async () => {
-			const runner = new RecordingRunner(true, { block: true, reason: "extension blocked" });
-			const gate = makeGate(undefined, runner);
-
-			const result = await gate({ toolCall: { name: "bash", id: "c1" }, args: { command: "rm -rf /" } });
-
-			expect(runner.calls).toHaveLength(1);
-			expect(result).toEqual({ block: true, reason: "extension blocked" });
+		it("deny short-circuits before a real extension tool_call handler", async () => {
+			const denyRule: Rule = {
+				raw: "bash(git push *)",
+				tool: "bash",
+				specifier: "git push *",
+				list: "deny",
+				scope: "user",
+			};
+			const handlerCalls: unknown[] = [];
+			const resourceLoader = createTestResourceLoader({
+				extensionsResult: await createTestExtensionsResult(
+					[
+						(pi) => {
+							pi.on("tool_call", async (event) => {
+								handlerCalls.push(event);
+								return undefined;
+							});
+						},
+					],
+					cwd,
+				),
+			});
+			const { session } = await createAgentSession({
+				cwd,
+				agentDir,
+				model: getModel("anthropic", "claude-sonnet-4-5")!,
+				settingsManager: SettingsManager.inMemory({ permissions: { rules: [denyRule] } }, { projectTrusted: true }),
+				sessionManager: SessionManager.inMemory(),
+				resourceLoader,
+			});
+			try {
+				// A permitted call falls through to the extension handler, proving it is wired.
+				expect(await callGate(session, "bash", { command: "ls -la" })).toBeUndefined();
+				expect(handlerCalls).toHaveLength(1);
+				// A denied call is blocked by the permission gate and never forwarded.
+				expect(await callGate(session, "bash", { command: "git push origin main" })).toMatchObject({ block: true });
+				expect(handlerCalls).toHaveLength(1);
+			} finally {
+				session.dispose();
+			}
 		});
 	});
 });
