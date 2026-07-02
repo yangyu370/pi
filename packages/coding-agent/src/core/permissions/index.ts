@@ -4,5 +4,6 @@
  * barrel with their own exports.
  */
 
+export * from "./command-analyzer.ts";
 export * from "./rule-matcher.ts";
 export * from "./types.ts";
