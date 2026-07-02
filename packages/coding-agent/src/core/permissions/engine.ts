@@ -171,13 +171,11 @@ function checkUnit(unit: Unit, snapshot: PolicySnapshot, anchors: Anchors): Unit
 	const denyRule = rules.find((r) => r.list === "deny" && ruleApplies(r, unit, snapshot, anchors));
 	if (denyRule) return { decision: "deny", reason: `denied by rule "${denyRule.raw}"` };
 
-	// 2. circuit breaker (above allow; §24.3).
+	// 2. circuit breaker (above allow; §24.3). NO suggestedRules: a circuit-breaker
+	// re-asks regardless of any allow rule, so an "always allow" choice would be
+	// useless AND a footgun (it would auto-allow every future non-critical variant).
 	if (unit.kind === "command" && unit.access.circuitBreakerReason) {
-		return {
-			decision: "ask",
-			reason: unit.access.circuitBreakerReason,
-			suggestedRules: suggestForUnit(unit, snapshot),
-		};
+		return { decision: "ask", reason: unit.access.circuitBreakerReason };
 	}
 
 	// 3. ask rule.
@@ -262,7 +260,8 @@ export function check(snapshot: PolicySnapshot): CheckResult {
 
 /** Combines per-subcommand unit results: any deny → deny; any ask → ask; all allow → allow. */
 function combine(results: UnitResult[]): CheckResult {
-	if (results.length === 0) return { decision: "allow" };
+	// Fail safe (spec §18): an empty accesses list asks rather than allows.
+	if (results.length === 0) return { decision: "ask", reason: "no analyzable command; asking to be safe" };
 	const deny = results.find((r) => r.decision === "deny");
 	if (deny) return { decision: "deny", reason: deny.reason };
 	const asks = results.filter((r) => r.decision === "ask");

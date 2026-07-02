@@ -50,6 +50,24 @@ describe("engine.check — pipeline order (spec §10)", () => {
 		expect(res.reason).toMatch(/home directory/i);
 	});
 
+	it("2. circuit-breaker ask offers NO always-allow suggestion", () => {
+		const res = check(snap({ tool: "bash", resource: bash("rm -rf ~"), mode: "bypass" }));
+		expect(res.decision).toBe("ask");
+		expect(res.suggestedRules ?? []).toEqual([]);
+	});
+
+	it("2. composite with a circuit-breaker subcommand asks but suggests nothing", () => {
+		const res = check(snap({ tool: "bash", resource: bash("echo hi && rm -rf /"), mode: "bypass" }));
+		expect(res.decision).toBe("ask");
+		expect(res.suggestedRules ?? []).toEqual([]);
+	});
+
+	it("2. a normal (non-circuit-breaker) bash ask still yields its suggestion", () => {
+		const res = check(snap({ tool: "bash", resource: bash("npm run build"), mode: "default" }));
+		expect(res.decision).toBe("ask");
+		expect(res.suggestedRules).toEqual([{ tool: "bash", specifier: "npm run *", list: "allow" }]);
+	});
+
 	it("3. ask rule beats allow rule (broad ask masks narrow allow)", () => {
 		const rules = [rule("ask", "bash", "git *"), rule("allow", "bash", "git push *")];
 		expect(check(snap({ tool: "bash", resource: bash("git push"), mode: "bypass", rules })).decision).toBe("ask");
@@ -283,5 +301,12 @@ describe("engine.check — totality", () => {
 		expect(() =>
 			check(snap({ tool: "weird", resource: { kind: "paths", paths: [""] }, mode: "default" })),
 		).not.toThrow();
+	});
+
+	it("empty command accesses fail safe to ask (not allow)", () => {
+		const res = check(
+			snap({ tool: "bash", resource: { kind: "command", command: "", accesses: [] }, mode: "bypass" }),
+		);
+		expect(res.decision).toBe("ask");
 	});
 });
