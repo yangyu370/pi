@@ -35,6 +35,7 @@ import {
 	resetApiProviders,
 	streamSimple,
 } from "@earendil-works/pi-ai/compat";
+import { getAgentDir } from "../config.ts";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
@@ -84,6 +85,8 @@ import {
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
 import type { ModelRegistry } from "./model-registry.ts";
+import type { PermissionApprovalProvider, PermissionMode, Rule } from "./permissions/index.ts";
+import { PermissionService } from "./permissions/index.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionManager } from "./session-manager.ts";
@@ -187,6 +190,12 @@ export interface AgentSessionConfig {
 	extensionRunnerRef?: { current?: ExtensionRunner };
 	/** Session start event metadata emitted when extensions bind to this runtime. */
 	sessionStartEvent?: SessionStartEvent;
+	/** Interactive approval UI (mode-layer injected; absent ⇒ headless). */
+	approvalProvider?: PermissionApprovalProvider;
+	/** Forces the session permission mode; absent ⇒ derived from trust. */
+	permissionMode?: PermissionMode;
+	/** CLI `--allow`/`--deny` rules for this run. */
+	permissionRules?: Rule[];
 }
 
 export interface ExtensionBindings {
@@ -306,6 +315,7 @@ export class AgentSession {
 	private _customTools: ToolDefinition[];
 	private _baseToolDefinitions: Map<string, ToolDefinition> = new Map();
 	private _cwd: string;
+	private _permissions?: PermissionService;
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
 	private _initialActiveToolNames?: string[];
 	private _allowedToolNames?: Set<string>;
@@ -349,6 +359,21 @@ export class AgentSession {
 		this._excludedToolNames = config.excludedToolNames ? new Set(config.excludedToolNames) : undefined;
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
+
+		if (this.settingsManager.getPermissionsEnabled()) {
+			this._permissions = new PermissionService({
+				agentDir: getAgentDir(),
+				cwd: this._cwd,
+				enabled: true,
+				isTrusted: () => this.settingsManager.isProjectTrusted(),
+				userRules: this.settingsManager.getPermissionRules(),
+				cliRules: config.permissionRules,
+				approvalProvider: config.approvalProvider,
+				modeOverride: config.permissionMode,
+				// A headless `ask` must resolve to allow for back-compat; a circuit-breaker still denies.
+				nonInteractiveDefault: "bypass",
+			});
+		}
 
 		// Always subscribe to agent events for internal handling
 		// (session persistence, extensions, auto-compaction, retry logic)
@@ -417,6 +442,11 @@ export class AgentSession {
 	 */
 	private _installAgentToolHooks(): void {
 		this.agent.beforeToolCall = async ({ toolCall, args }) => {
+			if (this._permissions) {
+				const outcome = await this._permissions.evaluate(toolCall, args);
+				if (outcome) return outcome;
+			}
+
 			const runner = this._extensionRunner;
 			if (!runner.hasHandlers("tool_call")) {
 				return undefined;
@@ -1589,6 +1619,11 @@ export class AgentSession {
 				previousLevel,
 			});
 		}
+	}
+
+	/** Sets the session permission mode; no-op when permissions are disabled. */
+	setPermissionMode(mode: PermissionMode): void {
+		this._permissions?.setMode(mode);
 	}
 
 	/**
