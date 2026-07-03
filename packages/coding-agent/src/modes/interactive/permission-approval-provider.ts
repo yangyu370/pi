@@ -8,7 +8,7 @@ import { ApprovalOverlayComponent } from "./components/approval-overlay.ts";
 
 const DENY_REASON = "Denied by user";
 
-export type ApprovalOverlayHost = Pick<TUI, "showOverlay">;
+export type ApprovalOverlayHost = Pick<TUI, "showOverlay"> & { terminal?: { rows: number } };
 
 interface PendingApproval {
 	request: PermissionApprovalRequest;
@@ -68,6 +68,7 @@ export class InteractiveApprovalProvider implements PermissionApprovalProvider {
 				request: pending.request,
 				onSubmit: done,
 				onCancel: () => done({ type: "deny", reason: DENY_REASON }),
+				terminalRows: this.host.terminal ? () => this.host.terminal?.rows ?? 24 : undefined,
 			});
 			const options: OverlayOptions = { anchor: "center" };
 			pending.handle = this.host.showOverlay(component, options);

@@ -16,6 +16,8 @@ export interface AppKeybindings {
 	"app.exit": true;
 	"app.suspend": true;
 	"app.thinking.cycle": true;
+	"app.permission.mode.cycle": true;
+	"app.permission.diff.toggle": true;
 	"app.model.cycleForward": true;
 	"app.model.cycleBackward": true;
 	"app.model.select": true;
@@ -70,8 +72,16 @@ export const KEYBINDINGS = {
 		description: "Suspend to background",
 	},
 	"app.thinking.cycle": {
-		defaultKeys: "shift+tab",
+		defaultKeys: "alt+t",
 		description: "Cycle thinking level",
+	},
+	"app.permission.mode.cycle": {
+		defaultKeys: "shift+tab",
+		description: "Cycle permission mode",
+	},
+	"app.permission.diff.toggle": {
+		defaultKeys: "ctrl+e",
+		description: "Expand permission approval diff",
 	},
 	"app.model.cycleForward": {
 		defaultKeys: "ctrl+p",
@@ -238,6 +248,7 @@ const KEYBINDING_NAME_MIGRATIONS = {
 	exit: "app.exit",
 	suspend: "app.suspend",
 	cycleThinkingLevel: "app.thinking.cycle",
+	cyclePermissionMode: "app.permission.mode.cycle",
 	cycleModelForward: "app.model.cycleForward",
 	cycleModelBackward: "app.model.cycleBackward",
 	selectModel: "app.model.select",

@@ -2,6 +2,7 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { AgentSession } from "../src/core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.ts";
+import type { PermissionMode } from "../src/core/permissions/index.ts";
 import { FooterComponent, formatCwdForFooter } from "../src/modes/interactive/components/footer.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
@@ -20,6 +21,7 @@ function createSession(options: {
 	provider?: string;
 	reasoning?: boolean;
 	thinkingLevel?: string;
+	permissionMode?: PermissionMode;
 	usage?: AssistantUsage;
 }): AgentSession {
 	const usage = options.usage;
@@ -52,6 +54,7 @@ function createSession(options: {
 			getCwd: () => "/tmp/project",
 		},
 		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
+		getPermissionMode: () => options.permissionMode ?? "default",
 		modelRegistry: {
 			isUsingOAuth: () => false,
 		},
@@ -140,5 +143,59 @@ describe("FooterComponent width handling", () => {
 
 		const statsLine = stripAnsi(footer.render(120)[1]);
 		expect(statsLine).toContain("CH25.0%");
+	});
+
+	it("does not show a permission indicator in default mode", () => {
+		const footer = new FooterComponent(
+			createSession({ sessionName: "", permissionMode: "default" }),
+			createFooterData(1),
+		);
+
+		const output = stripAnsi(footer.render(120).join("\n"));
+
+		expect(output).not.toContain("permissions");
+		expect(output).not.toContain("plan mode");
+		expect(output).not.toContain("accept edits");
+	});
+
+	it("shows safe permission mode indicators", () => {
+		const acceptFooter = new FooterComponent(
+			createSession({ sessionName: "", permissionMode: "acceptEdits" }),
+			createFooterData(1),
+		);
+		const planFooter = new FooterComponent(
+			createSession({ sessionName: "", permissionMode: "plan" }),
+			createFooterData(1),
+		);
+
+		expect(stripAnsi(acceptFooter.render(120).join("\n"))).toContain("accept edits on (shift+tab to cycle)");
+		expect(stripAnsi(planFooter.render(120).join("\n"))).toContain("plan mode on (shift+tab to cycle)");
+	});
+
+	it("shows dangerous permission mode warnings", () => {
+		const dontAskFooter = new FooterComponent(
+			createSession({ sessionName: "", permissionMode: "dontAsk" }),
+			createFooterData(1),
+		);
+		const bypassFooter = new FooterComponent(
+			createSession({ sessionName: "", permissionMode: "bypass" }),
+			createFooterData(1),
+		);
+
+		expect(stripAnsi(dontAskFooter.render(120).join("\n"))).toContain("dont-ask on - unapproved tools auto-denied");
+		expect(stripAnsi(bypassFooter.render(120).join("\n"))).toContain("bypass permissions on");
+	});
+
+	it("falls back to compact permission indicators on narrow widths", () => {
+		const footer = new FooterComponent(
+			createSession({ sessionName: "", permissionMode: "bypass" }),
+			createFooterData(1),
+		);
+		const lines = footer.render(8);
+
+		expect(lines.map(stripAnsi).join("\n")).toContain("!");
+		for (const line of lines) {
+			expect(visibleWidth(line)).toBeLessThanOrEqual(8);
+		}
 	});
 });

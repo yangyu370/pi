@@ -1,12 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import type { SuggestedRule } from "../../src/core/permissions/index.ts";
 import { buildApprovalLines, buildApprovalOptions } from "../../src/modes/interactive/components/approval-overlay.ts";
+import { initTheme } from "../../src/modes/interactive/theme/theme.ts";
 import { makeApprovalRequest } from "./approval-fixtures.ts";
+
+beforeAll(() => {
+	initTheme("dark");
+});
 
 describe("buildApprovalOptions", () => {
 	it("orders Allow once, each choice, then Deny with the right outcomes", () => {
 		const options = buildApprovalOptions(makeApprovalRequest());
-		expect(options.map((o) => o.label)).toEqual(["Allow once", "Always allow git push *", "Deny"]);
+		expect(options.map((o) => o.label)).toEqual([
+			"Yes",
+			"Always allow git push *",
+			"No, tell pi what to do differently",
+		]);
 		expect(options[0].outcome).toEqual({ type: "allow-once" });
 		expect(options[1].outcome).toEqual({
 			type: "always-allow",
@@ -20,7 +29,7 @@ describe("buildApprovalOptions", () => {
 	it("omits always-allow options when there are no choices", () => {
 		const request = makeApprovalRequest();
 		request.alwaysAllowChoices = [];
-		expect(buildApprovalOptions(request).map((o) => o.label)).toEqual(["Allow once", "Deny"]);
+		expect(buildApprovalOptions(request).map((o) => o.label)).toEqual(["Yes", "No, tell pi what to do differently"]);
 	});
 
 	it("reflects the rule count in a multi-rule choice label", () => {
@@ -37,10 +46,10 @@ describe("buildApprovalOptions", () => {
 });
 
 describe("buildApprovalLines", () => {
-	it("includes a capability badge, the title, and the detail", () => {
+	it("includes a capability title, resource, and detail", () => {
 		const lines = buildApprovalLines(makeApprovalRequest());
-		expect(lines[0]).toContain("[exec]");
-		expect(lines[0]).toContain("Run: git push");
+		expect(lines[0]).toBe("Run command");
+		expect(lines[1]).toContain("Run: git push");
 		expect(lines).toContain("git push");
 	});
 
@@ -54,6 +63,6 @@ describe("buildApprovalLines", () => {
 	it("truncates a long diff preview", () => {
 		const diffPreview = Array.from({ length: 40 }, (_, i) => `+ line ${i}`).join("\n");
 		const lines = buildApprovalLines(makeApprovalRequest({ diffPreview }));
-		expect(lines.some((l) => l.includes("more lines"))).toBe(true);
+		expect(lines.some((l) => l.includes("... +37 lines (ctrl+e to expand)"))).toBe(true);
 	});
 });

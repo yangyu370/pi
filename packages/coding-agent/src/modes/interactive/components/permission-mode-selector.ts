@@ -83,7 +83,7 @@ export class PermissionModeSelectorComponent extends Container {
 		} else if (kb.matches(keyData, "tui.select.down") || keyData === "j") {
 			this.selectedIndex = Math.min(MODE_OPTIONS.length - 1, this.selectedIndex + 1);
 			this.updateList();
-		} else if (kb.matches(keyData, "tui.select.confirm") || keyData === "\n") {
+		} else if (kb.matches(keyData, "tui.select.confirm") || keyData === "\n" || keyData === "\r") {
 			this.onSelect(MODE_OPTIONS[this.selectedIndex].mode);
 		} else if (kb.matches(keyData, "tui.select.cancel")) {
 			this.onCancel();
