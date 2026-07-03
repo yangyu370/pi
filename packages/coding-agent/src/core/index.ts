@@ -75,4 +75,15 @@ export {
 	type TurnStartEvent,
 	type WorkingIndicatorOptions,
 } from "./extensions/index.ts";
+export {
+	type AlwaysAllowChoice,
+	type ApprovalDisplay,
+	type Capability,
+	PERMISSION_APPROVAL_CONTRACT_VERSION,
+	type PermissionApprovalOutcome,
+	type PermissionApprovalProvider,
+	type PermissionApprovalRequest,
+	type Scope,
+	type SuggestedRule,
+} from "./permissions/index.ts";
 export { createSyntheticSourceInfo } from "./source-info.ts";

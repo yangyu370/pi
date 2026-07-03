@@ -84,6 +84,7 @@ import {
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
 import type { ModelRegistry } from "./model-registry.ts";
+import type { PermissionApprovalProvider } from "./permissions/index.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionManager } from "./session-manager.ts";
@@ -187,6 +188,8 @@ export interface AgentSessionConfig {
 	extensionRunnerRef?: { current?: ExtensionRunner };
 	/** Session start event metadata emitted when extensions bind to this runtime. */
 	sessionStartEvent?: SessionStartEvent;
+	/** Optional UI/provider bridge for permission ask decisions. */
+	approvalProvider?: PermissionApprovalProvider;
 }
 
 export interface ExtensionBindings {
@@ -319,6 +322,7 @@ export class AgentSession {
 	private _extensionShutdownHandler?: ShutdownHandler;
 	private _extensionErrorListener?: ExtensionErrorListener;
 	private _extensionErrorUnsubscriber?: () => void;
+	private _approvalProvider: PermissionApprovalProvider | undefined;
 
 	// Model registry for API key resolution
 	private _modelRegistry: ModelRegistry;
@@ -349,6 +353,7 @@ export class AgentSession {
 		this._excludedToolNames = config.excludedToolNames ? new Set(config.excludedToolNames) : undefined;
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
+		this._approvalProvider = config.approvalProvider;
 
 		// Always subscribe to agent events for internal handling
 		// (session persistence, extensions, auto-compaction, retry logic)
@@ -365,6 +370,14 @@ export class AgentSession {
 	/** Model registry for API key resolution and model discovery */
 	get modelRegistry(): ModelRegistry {
 		return this._modelRegistry;
+	}
+
+	get approvalProvider(): PermissionApprovalProvider | undefined {
+		return this._approvalProvider;
+	}
+
+	setApprovalProvider(provider: PermissionApprovalProvider | undefined): void {
+		this._approvalProvider = provider;
 	}
 
 	private async _getRequiredRequestAuth(model: Model<any>): Promise<{
