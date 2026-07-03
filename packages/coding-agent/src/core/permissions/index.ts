@@ -1,11 +1,11 @@
-export {
-	type AlwaysAllowChoice,
-	type ApprovalDisplay,
-	type Capability,
-	PERMISSION_APPROVAL_CONTRACT_VERSION,
-	type PermissionApprovalOutcome,
-	type PermissionApprovalProvider,
-	type PermissionApprovalRequest,
-	type Scope,
-	type SuggestedRule,
-} from "./types.ts";
+/**
+ * Barrel for the permission layer core module.
+ */
+
+export * from "./command-analyzer.ts";
+export * from "./engine.ts";
+export * from "./rule-matcher.ts";
+export * from "./rule-store.ts";
+export * from "./service.ts";
+export * from "./tool-metadata.ts";
+export * from "./types.ts";

@@ -28,6 +28,10 @@ Declining trust skips protected resources. `AGENTS.md` and `CLAUDE.md` context f
 
 Non-interactive modes (`-p`, `--mode json`, and `--mode rpc`) do not show a trust prompt. Without an applicable saved trust decision, `defaultProjectTrust: "ask"` and `"never"` ignore such resources, while `"always"` trusts them. Use `--approve`/`-a` or `--no-approve`/`-na` to override project trust for one run.
 
+## Approval Guardrail (Tool Permissions)
+
+Pi also has a per-tool approval layer that gates read, edit, write, and shell tool calls behind session modes and allow/ask/deny rules before they run. It is a convenience guardrail that reduces accidental or unwanted tool actions; it is not a second security boundary and does not sandbox the process. Like project trust, it runs in-process with the permissions of the pi user and cannot make untrusted code, untrusted prompts, or untrusted model output safe. See [Permissions](permissions.md) for modes, rules, and configuration.
+
 ## No Built-in Sandbox
 
 Pi does not include a built-in sandbox. Built-in tools can read files, write files, edit files, and run shell commands with the permissions of the pi process. Extensions are TypeScript modules that run with the same permissions. Package installs, shell commands, language servers, test commands, and other developer tools behave as ordinary local processes.

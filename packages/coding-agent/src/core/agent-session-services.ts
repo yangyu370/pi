@@ -65,6 +65,8 @@ export interface CreateAgentSessionFromServicesOptions {
 	noTools?: CreateAgentSessionOptions["noTools"];
 	customTools?: ToolDefinition[];
 	approvalProvider?: PermissionApprovalProvider;
+	permissionMode?: CreateAgentSessionOptions["permissionMode"];
+	permissionRules?: CreateAgentSessionOptions["permissionRules"];
 }
 
 /**
@@ -206,5 +208,7 @@ export async function createAgentSessionFromServices(
 		customTools: options.customTools,
 		sessionStartEvent: options.sessionStartEvent,
 		approvalProvider: options.approvalProvider,
+		permissionMode: options.permissionMode,
+		permissionRules: options.permissionRules,
 	});
 }

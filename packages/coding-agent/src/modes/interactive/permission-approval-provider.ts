@@ -6,6 +6,8 @@ import type {
 } from "../../core/permissions/index.ts";
 import { ApprovalOverlayComponent } from "./components/approval-overlay.ts";
 
+const DENY_REASON = "Denied by user";
+
 export type ApprovalOverlayHost = Pick<TUI, "showOverlay">;
 
 interface PendingApproval {
@@ -15,6 +17,10 @@ interface PendingApproval {
 	settled: boolean;
 }
 
+/**
+ * Bridges the permission approval contract to the TUI overlay.
+ * Concurrent asks are serialized, and failures resolve to deny instead of rejecting.
+ */
 export class InteractiveApprovalProvider implements PermissionApprovalProvider {
 	private readonly host: ApprovalOverlayHost;
 	private active: PendingApproval | undefined;
@@ -51,15 +57,17 @@ export class InteractiveApprovalProvider implements PermissionApprovalProvider {
 		if (!pending) {
 			return;
 		}
+
 		this.active = pending;
-		const done = (outcome: PermissionApprovalOutcome) => {
+		const done = (outcome: PermissionApprovalOutcome): void => {
 			this.finish(pending, outcome, { startNext: true });
 		};
+
 		try {
 			const component: Component = new ApprovalOverlayComponent({
 				request: pending.request,
 				onSubmit: done,
-				onCancel: () => done({ type: "deny", reason: "Denied by user" }),
+				onCancel: () => done({ type: "deny", reason: DENY_REASON }),
 			});
 			const options: OverlayOptions = { anchor: "center" };
 			pending.handle = this.host.showOverlay(component, options);

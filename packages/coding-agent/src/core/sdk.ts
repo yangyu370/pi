@@ -11,7 +11,7 @@ import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefi
 import { convertToLlm } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import { findInitialModel } from "./model-resolver.ts";
-import type { PermissionApprovalProvider } from "./permissions/index.ts";
+import type { PermissionApprovalProvider, PermissionMode, Rule } from "./permissions/index.ts";
 import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
@@ -83,6 +83,11 @@ export interface CreateAgentSessionOptions {
 	sessionStartEvent?: SessionStartEvent;
 	/** Optional UI/provider bridge for permission ask decisions. */
 	approvalProvider?: PermissionApprovalProvider;
+
+	/** Forces the session permission mode; absent ⇒ derived from trust. */
+	permissionMode?: PermissionMode;
+	/** CLI `--allow`/`--deny` rules for this run. */
+	permissionRules?: Rule[];
 }
 
 /** Result from createAgentSession */
@@ -382,6 +387,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		sessionManager,
 		settingsManager,
 		cwd,
+		agentDir,
 		scopedModels: options.scopedModels,
 		resourceLoader,
 		customTools: options.customTools,
@@ -392,6 +398,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		extensionRunnerRef,
 		sessionStartEvent: options.sessionStartEvent,
 		approvalProvider: options.approvalProvider,
+		permissionMode: options.permissionMode,
+		permissionRules: options.permissionRules,
 	});
 	const extensionsResult = resourceLoader.getExtensions();
 

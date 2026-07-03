@@ -24,6 +24,10 @@
           "path": "security.md"
         },
         {
+          "title": "Permissions",
+          "path": "permissions.md"
+        },
+        {
           "title": "Containerization",
           "path": "containerization.md"
         },
