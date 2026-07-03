@@ -6,6 +6,8 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import chalk from "chalk";
 import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../config.ts";
 import type { ExtensionFlag } from "../core/extensions/types.ts";
+import type { PermissionMode, Rule } from "../core/permissions/index.ts";
+import { parseRule } from "../core/permissions/index.ts";
 
 export type Mode = "text" | "json" | "rpc";
 
@@ -21,6 +23,8 @@ export interface Args {
 	help?: boolean;
 	version?: boolean;
 	mode?: Mode;
+	permissionMode?: PermissionMode;
+	permissionRules?: Rule[];
 	name?: string;
 	noSession?: boolean;
 	session?: string;
@@ -58,6 +62,13 @@ const VALID_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh
 
 export function isValidThinkingLevel(level: string): level is ThinkingLevel {
 	return VALID_THINKING_LEVELS.includes(level as ThinkingLevel);
+}
+
+const VALID_PERMISSION_MODES = ["plan", "default", "acceptEdits", "dontAsk", "bypass"] as const;
+const PERMISSION_MODE_ERROR = "--permission-mode must be one of: plan, default, acceptEdits, dontAsk, bypass";
+
+function isValidPermissionMode(mode: string): mode is PermissionMode {
+	return VALID_PERMISSION_MODES.includes(mode as PermissionMode);
 }
 
 export function parseArgs(args: string[]): Args {
@@ -127,6 +138,29 @@ export function parseArgs(args: string[]): Args {
 				.split(",")
 				.map((s) => s.trim())
 				.filter((name) => name.length > 0);
+		} else if (arg === "--permission-mode") {
+			const mode = i + 1 < args.length ? args[++i] : undefined;
+			if (mode !== undefined && isValidPermissionMode(mode)) {
+				result.permissionMode = mode;
+			} else {
+				result.diagnostics.push({ type: "error", message: PERMISSION_MODE_ERROR });
+			}
+		} else if (arg === "--allow" || arg === "--deny") {
+			const list = arg === "--allow" ? "allow" : "deny";
+			if (i + 1 < args.length) {
+				const value = args[++i];
+				const { tool, specifier } = parseRule(value);
+				result.permissionRules ??= [];
+				result.permissionRules.push({
+					raw: value,
+					tool,
+					...(specifier !== undefined ? { specifier } : {}),
+					list,
+					scope: "cli",
+				});
+			} else {
+				result.diagnostics.push({ type: "error", message: `${arg} requires a value` });
+			}
 		} else if (arg === "--thinking" && i + 1 < args.length) {
 			const level = args[++i];
 			if (isValidThinkingLevel(level)) {
@@ -258,6 +292,9 @@ ${chalk.bold("Options:")}
                                  Applies to built-in, extension, and custom tools
   --exclude-tools, -xt <tools>   Comma-separated denylist of tool names to disable
                                  Applies to built-in, extension, and custom tools
+  --permission-mode <mode>       Set permission mode: plan, default, acceptEdits, dontAsk, bypass
+  --allow <specifier>            Pre-approve a tool/rule, e.g. "bash(git push *)" (repeatable)
+  --deny <specifier>             Block a tool/rule, e.g. "read(.env)" (repeatable)
   --thinking <level>             Set thinking level: off, minimal, low, medium, high, xhigh
   --extension, -e <path>         Load an extension file (can be used multiple times)
   --no-extensions, -ne           Disable extension discovery (explicit -e paths still work)

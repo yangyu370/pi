@@ -78,6 +78,7 @@ import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.t
 import { createCompactionSummaryMessage } from "../../core/messages.ts";
 import { defaultModelPerProvider, findExactModelReferenceMatch, resolveModelScope } from "../../core/model-resolver.ts";
 import { DefaultPackageManager } from "../../core/package-manager.ts";
+import type { PermissionMode } from "../../core/permissions/index.ts";
 import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "../../core/provider-display-names.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
@@ -115,6 +116,7 @@ import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./c
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { ModelSelectorComponent } from "./components/model-selector.ts";
 import { type AuthSelectorProvider, OAuthSelectorComponent } from "./components/oauth-selector.ts";
+import { PermissionModeSelectorComponent } from "./components/permission-mode-selector.ts";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
 import { SessionSelectorComponent } from "./components/session-selector.ts";
 import { SettingsSelectorComponent } from "./components/settings-selector.ts";
@@ -2637,6 +2639,12 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
+			if (text === "/permission" || text.startsWith("/permission ")) {
+				const arg = text.startsWith("/permission ") ? text.slice("/permission ".length).trim() : "";
+				this.editor.setText("");
+				this.handlePermissionCommand(arg);
+				return;
+			}
 			if (text === "/login") {
 				this.showOAuthSelector("login");
 				this.editor.setText("");
@@ -4230,6 +4238,34 @@ export class InteractiveMode {
 			);
 			return false;
 		}
+	}
+
+	private handlePermissionCommand(arg: string): void {
+		const modes: PermissionMode[] = ["plan", "default", "acceptEdits", "dontAsk", "bypass"];
+		if (arg) {
+			if ((modes as string[]).includes(arg)) {
+				this.session.setPermissionMode(arg as PermissionMode);
+				this.showStatus(`Permission mode: ${arg}`);
+			} else {
+				this.showStatus("Invalid mode. Use: plan, default, acceptEdits, dontAsk, bypass");
+			}
+			return;
+		}
+		this.showSelector((done) => {
+			const selector = new PermissionModeSelectorComponent({
+				current: this.session.getPermissionMode() ?? "default",
+				onSelect: (mode) => {
+					this.session.setPermissionMode(mode);
+					done();
+					this.showStatus(`Permission mode: ${mode}`);
+				},
+				onCancel: () => {
+					done();
+					this.ui.requestRender();
+				},
+			});
+			return { component: selector, focus: selector };
+		});
 	}
 
 	private showTrustSelector(): void {

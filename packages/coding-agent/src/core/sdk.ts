@@ -11,6 +11,7 @@ import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefi
 import { convertToLlm } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import { findInitialModel } from "./model-resolver.ts";
+import type { PermissionMode, Rule } from "./permissions/index.ts";
 import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
@@ -80,6 +81,11 @@ export interface CreateAgentSessionOptions {
 	settingsManager?: SettingsManager;
 	/** Session start event metadata for extension runtime startup. */
 	sessionStartEvent?: SessionStartEvent;
+
+	/** Forces the session permission mode; absent ⇒ derived from trust. */
+	permissionMode?: PermissionMode;
+	/** CLI `--allow`/`--deny` rules for this run. */
+	permissionRules?: Rule[];
 }
 
 /** Result from createAgentSession */
@@ -389,6 +395,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		excludedToolNames,
 		extensionRunnerRef,
 		sessionStartEvent: options.sessionStartEvent,
+		permissionMode: options.permissionMode,
+		permissionRules: options.permissionRules,
 	});
 	const extensionsResult = resourceLoader.getExtensions();
 

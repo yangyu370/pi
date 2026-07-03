@@ -1623,6 +1623,11 @@ export class AgentSession {
 		}
 	}
 
+	/** Current session permission mode; undefined when permissions are disabled. */
+	getPermissionMode(): PermissionMode | undefined {
+		return this._permissions?.mode;
+	}
+
 	/** Sets the session permission mode; no-op when permissions are disabled. */
 	setPermissionMode(mode: PermissionMode): void {
 		this._permissions?.setMode(mode);
