@@ -15,8 +15,10 @@ The permission mode is session-only: it is never persisted across sessions, and 
 | `plan` | Read-only exploration. Reads and built-in read-only shell commands are allowed; every edit, write, and other command is denied. |
 | `default` | Standard. Edits, writes, and non-read-only commands ask for approval unless an allow rule already covers them. |
 | `acceptEdits` | Auto-accepts edits and writes inside the workspace root; everything else asks. |
-| `dontAsk` | Auto-denies anything not already pre-approved by an allow rule. |
+| `dontAsk` | Auto-denies edits, writes, and non-read-only commands that aren't pre-approved by an allow rule; reads and read-only shell commands are still allowed. |
 | `bypass` | Skips ordinary prompts. The circuit breaker still applies: it asks interactively and denies when non-interactive. |
+
+In every mode, reads and built-in read-only shell commands (such as `ls`, `git status`, `cat`) are allowed unless an explicit `deny` or `ask` rule matches, and an `allow` rule can pre-approve a call in any mode (allow is checked before the mode default). The mode only governs what happens to writes, edits, and non-read-only commands that no rule already covers.
 
 Set the mode for a run with `--permission-mode <mode>`, or change it mid-session with `/permission <mode>` (`/permission` with no argument opens a selector).
 
@@ -62,7 +64,9 @@ When you choose "always allow" at an approval prompt, pi persists the resulting 
 
 ## Headless behavior
 
-Without an interactive UI (for example `-p`, `--mode json`, or `--mode rpc`) there is no one to answer a prompt, so an `ask` resolves to a non-interactive default: under `bypass` it is allowed, otherwise it is denied. The one exception is the circuit breaker — a circuit-breaker `ask` is always denied when non-interactive, even under `bypass`.
+Without an interactive UI (for example `-p`, `--mode json`, or `--mode rpc`) there is no one to answer a prompt. For back-compat, headless sessions run with a `bypass` non-interactive default, so an uncovered `ask` resolves to **allow** rather than failing closed — an unattended run will proceed with an edit or command that would have prompted interactively.
+
+What still blocks headlessly: the circuit breaker (always denied when non-interactive, even under `bypass`), any explicit `deny` rule, and modes whose default is to deny (`plan`, `dontAsk`). If you need a headless run to refuse uncovered edits and commands, use `--permission-mode plan` or `--permission-mode dontAsk`, or add explicit `deny` rules.
 
 ## Circuit breaker
 
