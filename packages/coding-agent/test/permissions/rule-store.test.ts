@@ -2,7 +2,12 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { appendProjectLocalRules, loadProjectLocalRules, mergeRules } from "../../src/core/permissions/rule-store.ts";
+import {
+	appendProjectLocalRules,
+	loadProjectLocalRules,
+	mergeRules,
+	removeProjectLocalRules,
+} from "../../src/core/permissions/rule-store.ts";
 import type { Rule } from "../../src/core/permissions/types.ts";
 
 const rule = (list: Rule["list"], tool: string, specifier: string | undefined, scope: Rule["scope"]): Rule => ({
@@ -78,6 +83,21 @@ describe("rule-store — project-local persistence", () => {
 		const raw = JSON.parse(readFileSync(join(agentDir, "permissions.json"), "utf8"));
 		expect(Object.keys(raw)).toEqual([dirA]);
 		expect(raw[dirA][0].raw).toBe("edit(/foo.ts)");
+	});
+
+	it("removes exact project-local rules by raw and list only from the requested dir", () => {
+		appendProjectLocalRules(agentDir, dirA, [
+			rule("allow", "bash", "git push *", "project-local"),
+			rule("deny", "bash", "git push *", "project-local"),
+			rule("allow", "edit", "/foo.ts", "project-local"),
+		]);
+		appendProjectLocalRules(agentDir, dirB, [rule("allow", "bash", "git push *", "project-local")]);
+
+		removeProjectLocalRules(agentDir, dirA, [rule("allow", "bash", "git push *", "project-local")]);
+
+		expect(loadProjectLocalRules(agentDir, dirA).map((x) => x.raw)).toEqual(["bash(git push *)", "edit(/foo.ts)"]);
+		expect(loadProjectLocalRules(agentDir, dirA).map((x) => x.list)).toEqual(["deny", "allow"]);
+		expect(loadProjectLocalRules(agentDir, dirB).map((x) => x.raw)).toEqual(["bash(git push *)"]);
 	});
 });
 

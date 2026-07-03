@@ -16,16 +16,24 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import {
+	applyEditsToNormalizedContent,
+	type Edit,
+	generateDiffString,
+	normalizeToLF,
+	stripBom,
+} from "../tools/edit-diff.ts";
 import { check } from "./engine.ts";
-import { appendProjectLocalRules, loadProjectLocalRules, mergeRules } from "./rule-store.ts";
+import { appendProjectLocalRules, loadProjectLocalRules, mergeRules, removeProjectLocalRules } from "./rule-store.ts";
 import { extractResource, getToolCapability } from "./tool-metadata.ts";
 import type {
 	AlwaysAllowChoice,
 	ApprovalDisplay,
 	CheckResult,
+	PermissionApprovalOutcome,
 	PermissionApprovalProvider,
 	PermissionApprovalRequest,
 	PermissionMode,
@@ -54,11 +62,29 @@ export interface PermissionServiceConfig {
 	modeOverride?: PermissionMode;
 	/** What a headless `ask` resolves to (`bypass` ⇒ allow, anything else ⇒ deny). */
 	nonInteractiveDefault?: PermissionMode;
+	approvalObserver?: PermissionApprovalObserver;
 	logger?: (msg: string) => void;
 }
 
 /** Max "always allow" choices offered per request (spec §24.1). */
 const MAX_CHOICES = 3;
+const DIFF_PREVIEW_MAX_BYTES = 1024 * 1024;
+const DETAIL_MAX_CHARS = 2000;
+
+export type PersistRulesResult = "persisted" | "session-only";
+
+export interface PermissionApprovalResolution {
+	display: ApprovalDisplay;
+	outcome: PermissionApprovalOutcome;
+	persistResult?: PersistRulesResult;
+}
+
+export type PermissionApprovalObserver = (resolution: PermissionApprovalResolution) => void;
+
+interface DiffPreviewResult {
+	diffPreview: string;
+	diffTruncated?: boolean;
+}
 
 function toPosix(p: string): string {
 	return p.replace(/\\/g, "/");
@@ -110,6 +136,57 @@ function asRecord(value: unknown): Record<string, unknown> {
 	return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : {};
 }
 
+function prefixLines(prefix: string, text: string): string {
+	return normalizeToLF(text)
+		.split("\n")
+		.map((line) => `${prefix} ${line}`)
+		.join("\n");
+}
+
+function truncateText(text: string, maxChars: number): { text: string; truncated: boolean } {
+	if (text.length <= maxChars) {
+		return { text, truncated: false };
+	}
+	return { text: `${text.slice(0, maxChars)}\n... truncated`, truncated: true };
+}
+
+function stringifyArgs(args: unknown): string {
+	try {
+		return JSON.stringify(args, null, 2) ?? "<args unavailable>";
+	} catch {
+		return "<args unavailable>";
+	}
+}
+
+function normalizeEditInput(value: unknown): Edit | undefined {
+	const edit = asRecord(value);
+	const oldText = edit.oldText;
+	const newText = edit.newText;
+	if (typeof oldText !== "string" || typeof newText !== "string") {
+		return undefined;
+	}
+	return { oldText, newText };
+}
+
+function fallbackEditPreview(edits: Edit[], previewOnly: boolean): string {
+	const lines = previewOnly ? ["(preview only)"] : [];
+	for (const edit of edits) {
+		lines.push(prefixLines("-", edit.oldText));
+		lines.push(prefixLines("+", edit.newText));
+	}
+	return lines.join("\n");
+}
+
+function previewErrorMessage(error: unknown): string {
+	const message = error instanceof Error ? error.message : String(error);
+	const indexed = message.match(/edits\[(\d+)\]/);
+	if (message.includes("Could not find")) {
+		const index = indexed ? Number.parseInt(indexed[1], 10) + 1 : 1;
+		return `edit ${index}: no match found`;
+	}
+	return message;
+}
+
 export class PermissionService {
 	readonly enabled: boolean;
 
@@ -123,6 +200,7 @@ export class PermissionService {
 	private approvalProvider?: PermissionApprovalProvider;
 	private readonly nonInteractiveDefault?: PermissionMode;
 	private readonly logger?: (msg: string) => void;
+	private approvalObserver?: PermissionApprovalObserver;
 
 	private modeOverride?: PermissionMode;
 	private cachedWorkspaceRoot?: string;
@@ -138,6 +216,7 @@ export class PermissionService {
 		this.approvalProvider = cfg.approvalProvider;
 		this.modeOverride = cfg.modeOverride;
 		this.nonInteractiveDefault = cfg.nonInteractiveDefault;
+		this.approvalObserver = cfg.approvalObserver;
 		this.logger = cfg.logger;
 	}
 
@@ -156,7 +235,11 @@ export class PermissionService {
 		this.approvalProvider = provider;
 	}
 
-	/** Git toplevel of `cwd`, falling back to `cwd` on any error; cached. */
+	setApprovalObserver(observer: PermissionApprovalObserver): void {
+		this.approvalObserver = observer;
+	}
+
+	/** Git toplevel of the immutable session cwd, falling back to cwd on error; cached. */
 	private resolveWorkspaceRoot(): string {
 		if (this.cachedWorkspaceRoot !== undefined) return this.cachedWorkspaceRoot;
 		let root = this.cwd;
@@ -187,24 +270,31 @@ export class PermissionService {
 	/** Assembles the full snapshot the engine needs for one tool call. */
 	buildSnapshot(toolName: string, args: unknown): PolicySnapshot {
 		const workspaceRoot = this.resolveWorkspaceRoot();
-		const projectLocal = loadProjectLocalRules(this.agentDir, this.canonicalDir());
-		const rules = mergeRules({
-			session: this.sessionRules,
-			cli: this.cliRules,
-			projectLocal,
-			user: this.userRules,
-		});
 		return {
 			tool: toolName,
 			capability: getToolCapability(toolName),
 			resource: extractResource(toolName, args),
 			mode: this.mode,
 			trusted: this.isTrusted(),
-			rules,
+			rules: this.listEffectiveRules(),
 			cwd: this.cwd,
 			home: homedir(),
 			workspaceRoot,
 		};
+	}
+
+	listEffectiveRules(): Rule[] {
+		const projectLocal = loadProjectLocalRules(this.agentDir, this.canonicalDir());
+		return mergeRules({
+			session: this.sessionRules,
+			cli: this.cliRules,
+			projectLocal,
+			user: this.userRules,
+		});
+	}
+
+	removeProjectLocalRules(rules: Rule[]): void {
+		removeProjectLocalRules(this.agentDir, this.canonicalDir(), rules);
 	}
 
 	/** Runs `check`, failing closed on any unexpected throw (ask if interactive, else deny). */
@@ -240,11 +330,16 @@ export class PermissionService {
 		if (this.approvalProvider) {
 			const request = this.buildApprovalRequest(snapshot, args, result.suggestedRules);
 			const outcome = await this.approvalProvider.requestApproval(request);
-			if (outcome.type === "deny") return { block: true, reason: outcome.reason };
+			if (outcome.type === "deny") {
+				this.approvalObserver?.({ display: request.display, outcome });
+				return { block: true, reason: outcome.reason };
+			}
 			if (outcome.type === "always-allow") {
-				await this.persistRules(outcome.rules);
+				const persistResult = await this.persistRules(outcome.rules);
+				this.approvalObserver?.({ display: request.display, outcome, persistResult });
 				return undefined;
 			}
+			this.approvalObserver?.({ display: request.display, outcome });
 			return undefined; // allow-once
 		}
 
@@ -268,15 +363,16 @@ export class PermissionService {
 	}
 
 	/** Persists always-allow rules; on failure keeps them in-session and logs (never throws). */
-	async persistRules(rules: SuggestedRule[]): Promise<void> {
-		if (rules.length === 0) return;
+	async persistRules(rules: SuggestedRule[]): Promise<PersistRulesResult> {
+		if (rules.length === 0) return "persisted";
 		try {
 			appendProjectLocalRules(this.agentDir, this.canonicalDir(), rules as Rule[]);
+			return "persisted";
 		} catch (err) {
 			for (const rule of rules) this.sessionRules.push(rule as Rule);
 			this.logger?.(`failed to persist permission rules, kept for this session only: ${String(err)}`);
+			return "session-only";
 		}
-		return Promise.resolve();
 	}
 
 	private buildChoices(
@@ -295,7 +391,11 @@ export class PermissionService {
 					? s.specifier
 					: reanchorPathSpecifier(s.specifier, snapshot.workspaceRoot);
 			const exact = makeSuggestedRule(s.tool, specifier);
-			choices.push({ id: `allow-${id++}`, label: `Always allow \`${specifier ?? s.tool}\``, rules: [exact] });
+			const label =
+				snapshot.resource.kind === "none" && specifier === undefined
+					? `Always allow \`${s.tool}\` (all inputs)`
+					: `Always allow \`${specifier ?? s.tool}\``;
+			choices.push({ id: `allow-${id++}`, label, rules: [exact] });
 
 			if (isMutate && specifier !== undefined && choices.length < MAX_CHOICES) {
 				const wide = widenToDirectory(specifier);
@@ -316,15 +416,19 @@ export class PermissionService {
 			toolName: snapshot.tool,
 			capability: snapshot.capability,
 			title: this.buildTitle(snapshot),
-			detail: this.buildDetail(snapshot),
-			...(diffPreview !== undefined ? { diffPreview } : {}),
+			detail: this.buildDetail(snapshot, args),
+			...(diffPreview !== undefined ? { diffPreview: diffPreview.diffPreview } : {}),
+			...(diffPreview?.diffTruncated ? { diffTruncated: true } : {}),
 			...(danger !== undefined ? { danger } : {}),
 		};
 	}
 
 	private buildTitle(snapshot: PolicySnapshot): string {
 		const { resource, capability, tool } = snapshot;
-		if (resource.kind === "command") return `Run: ${resource.command}`;
+		if (resource.kind === "command") {
+			const [firstLine = ""] = resource.command.split("\n");
+			return `Run: ${firstLine}${firstLine.length === resource.command.length ? "" : " ..."}`;
+		}
 		// Extension/MCP/custom tools carry no resource; name the tool instead of mislabeling it an edit.
 		if (resource.kind === "none") return `Run ${tool}`;
 		const path = resource.paths[0] ?? "";
@@ -332,30 +436,80 @@ export class PermissionService {
 		return tool === "write" ? `Write ${path}` : `Edit ${path}`;
 	}
 
-	private buildDetail(snapshot: PolicySnapshot): string {
+	private buildDetail(snapshot: PolicySnapshot, args: unknown): string {
 		const { resource } = snapshot;
-		if (resource.kind === "command") return resource.command;
+		if (resource.kind === "command") {
+			return resource.command.includes("\n") ? resource.command : "";
+		}
 		if (resource.kind === "paths") return resource.paths.join("\n");
-		return "";
+		return truncateText(stringifyArgs(args), DETAIL_MAX_CHARS).text;
 	}
 
-	private buildDiffPreview(tool: string, args: unknown): string | undefined {
+	private buildDiffPreview(tool: string, args: unknown): DiffPreviewResult | undefined {
 		const record = asRecord(args);
 		if (tool === "edit") {
-			const edits = record.edits;
-			if (!Array.isArray(edits)) return undefined;
-			return edits
-				.map((e) => {
-					const edit = asRecord(e);
-					return `- ${String(edit.oldText ?? "")}\n+ ${String(edit.newText ?? "")}`;
-				})
-				.join("\n");
+			return this.buildEditDiffPreview(record);
 		}
 		if (tool === "write") {
-			const content = record.content;
-			return typeof content === "string" ? content.split("\n").slice(0, 20).join("\n") : undefined;
+			return this.buildWriteDiffPreview(record);
 		}
 		return undefined;
+	}
+
+	private buildEditDiffPreview(record: Record<string, unknown>): DiffPreviewResult | undefined {
+		const path = record.path;
+		const rawEdits = record.edits;
+		if (typeof path !== "string" || !Array.isArray(rawEdits)) return undefined;
+		const edits = rawEdits.map(normalizeEditInput);
+		if (edits.some((edit) => edit === undefined)) return undefined;
+		const normalizedEdits = edits as Edit[];
+		const absolutePath = resolve(this.cwd, path);
+		try {
+			if (statSync(absolutePath).size > DIFF_PREVIEW_MAX_BYTES) {
+				return { diffPreview: fallbackEditPreview(normalizedEdits, true), diffTruncated: true };
+			}
+			const { text } = stripBom(readFileSync(absolutePath, "utf8"));
+			const normalizedContent = normalizeToLF(text);
+			const { baseContent, newContent } = applyEditsToNormalizedContent(normalizedContent, normalizedEdits, path);
+			return { diffPreview: generateDiffString(baseContent, newContent, 2).diff };
+		} catch (err) {
+			const message = previewErrorMessage(err);
+			if (message.includes("no match found")) {
+				return { diffPreview: message };
+			}
+			return {
+				diffPreview: `${message}\n${fallbackEditPreview(normalizedEdits, true)}`,
+			};
+		}
+	}
+
+	private buildWriteDiffPreview(record: Record<string, unknown>): DiffPreviewResult | undefined {
+		const path = record.path;
+		const content = record.content;
+		if (typeof path !== "string" || typeof content !== "string") return undefined;
+
+		const normalizedContent = normalizeToLF(content);
+		const contentLimit = truncateText(normalizedContent, DIFF_PREVIEW_MAX_BYTES);
+		const nextContent = contentLimit.text;
+		const absolutePath = resolve(this.cwd, path);
+		try {
+			if (statSync(absolutePath).size > DIFF_PREVIEW_MAX_BYTES) {
+				return {
+					diffPreview: generateDiffString("", nextContent, 2).diff,
+					diffTruncated: true,
+				};
+			}
+			const { text } = stripBom(readFileSync(absolutePath, "utf8"));
+			return {
+				diffPreview: generateDiffString(normalizeToLF(text), nextContent, 2).diff,
+				...(contentLimit.truncated ? { diffTruncated: true } : {}),
+			};
+		} catch {
+			return {
+				diffPreview: generateDiffString("", nextContent, 2).diff,
+				...(contentLimit.truncated ? { diffTruncated: true } : {}),
+			};
+		}
 	}
 
 	private buildDanger(snapshot: PolicySnapshot): ApprovalDisplay["danger"] {

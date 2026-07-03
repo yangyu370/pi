@@ -100,6 +100,8 @@ export interface ApprovalDisplay {
 	title: string;
 	detail: string;
 	diffPreview?: string;
+	/** Set when core had to truncate diffPreview before handing it to the UI. */
+	diffTruncated?: boolean;
 	danger?: {
 		level: "circuit-breaker" | "sensitive";
 		reason: string;

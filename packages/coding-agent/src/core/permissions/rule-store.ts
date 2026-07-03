@@ -111,6 +111,16 @@ export function appendProjectLocalRules(agentDir: string, canonicalDir: string, 
 	writeFileSync(filePath(agentDir), `${JSON.stringify(map, null, 2)}\n`, "utf8");
 }
 
+/** Removes exact rules (matched by raw + list) from the project-local scope. Throws on write failure. */
+export function removeProjectLocalRules(agentDir: string, canonicalDir: string, rules: Rule[]): void {
+	const map = readFile(agentDir);
+	const existing = Array.isArray(map[canonicalDir]) ? map[canonicalDir] : [];
+	const removeKeys = new Set(rules.map((entry) => rawListKey(entry)));
+	map[canonicalDir] = existing.filter((entry) => !removeKeys.has(rawListKey(entry)));
+	mkdirSync(agentDir, { recursive: true });
+	writeFileSync(filePath(agentDir), `${JSON.stringify(map, null, 2)}\n`, "utf8");
+}
+
 /**
  * Merges the four rule layers into a single de-duplicated list in fixed
  * priority order (session -> cli -> project-local -> user). Dedup collapses

@@ -10,6 +10,10 @@ const DENY_REASON = "Denied by user";
 
 export type ApprovalOverlayHost = Pick<TUI, "showOverlay"> & { terminal?: { rows: number } };
 
+export interface InteractiveApprovalProviderOptions {
+	now?: () => number;
+}
+
 interface PendingApproval {
 	request: PermissionApprovalRequest;
 	resolve: (outcome: PermissionApprovalOutcome) => void;
@@ -23,11 +27,13 @@ interface PendingApproval {
  */
 export class InteractiveApprovalProvider implements PermissionApprovalProvider {
 	private readonly host: ApprovalOverlayHost;
+	private readonly now: (() => number) | undefined;
 	private active: PendingApproval | undefined;
 	private readonly queue: PendingApproval[] = [];
 
-	constructor(host: ApprovalOverlayHost) {
+	constructor(host: ApprovalOverlayHost, options: InteractiveApprovalProviderOptions = {}) {
 		this.host = host;
+		this.now = options.now;
 	}
 
 	requestApproval(request: PermissionApprovalRequest): Promise<PermissionApprovalOutcome> {
@@ -69,6 +75,7 @@ export class InteractiveApprovalProvider implements PermissionApprovalProvider {
 				onSubmit: done,
 				onCancel: () => done({ type: "deny", reason: DENY_REASON }),
 				terminalRows: this.host.terminal ? () => this.host.terminal?.rows ?? 24 : undefined,
+				now: this.now,
 			});
 			const options: OverlayOptions = { anchor: "center" };
 			pending.handle = this.host.showOverlay(component, options);

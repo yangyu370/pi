@@ -5,27 +5,32 @@ import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, rawKeyHint } from "./keybinding-hints.ts";
 
 interface ModeOption {
-	mode: PermissionMode;
+	mode?: PermissionMode;
+	action?: "rules";
+	label: string;
 	description: string;
 }
 
 const MODE_OPTIONS: ModeOption[] = [
-	{ mode: "plan", description: "Read-only exploration; writes and exec denied." },
-	{ mode: "default", description: "Standard; first write/exec per tool category asks." },
-	{ mode: "acceptEdits", description: "Auto-accept edits/writes in the workspace; else ask." },
-	{ mode: "dontAsk", description: "Auto-deny unless pre-approved by an allow rule." },
-	{ mode: "bypass", description: "Skip ordinary prompts; circuit-breaker still guards." },
+	{ mode: "plan", label: "plan", description: "Read-only exploration; writes and exec denied." },
+	{ mode: "default", label: "default", description: "Standard; first write/exec per tool category asks." },
+	{ mode: "acceptEdits", label: "acceptEdits", description: "Auto-accept edits/writes in the workspace; else ask." },
+	{ mode: "dontAsk", label: "dontAsk", description: "Auto-deny unless pre-approved by an allow rule." },
+	{ mode: "bypass", label: "bypass", description: "Skip ordinary prompts; circuit-breaker still guards." },
+	{ action: "rules", label: "Manage rules...", description: "View and delete project-local permission rules." },
 ];
 
 export interface PermissionModeSelectorOptions {
 	current: PermissionMode;
 	onSelect: (mode: PermissionMode) => void;
+	onManageRules?: () => void;
 	onCancel: () => void;
 }
 
 export class PermissionModeSelectorComponent extends Container {
 	private readonly current: PermissionMode;
 	private readonly onSelect: (mode: PermissionMode) => void;
+	private readonly onManageRules: (() => void) | undefined;
 	private readonly onCancel: () => void;
 	private readonly listContainer: Container;
 	private selectedIndex: number;
@@ -34,6 +39,7 @@ export class PermissionModeSelectorComponent extends Container {
 		super();
 		this.current = options.current;
 		this.onSelect = options.onSelect;
+		this.onManageRules = options.onManageRules;
 		this.onCancel = options.onCancel;
 		this.selectedIndex = Math.max(
 			0,
@@ -69,7 +75,7 @@ export class PermissionModeSelectorComponent extends Container {
 			const isCurrent = option.mode === this.current;
 			const checkmark = isCurrent ? theme.fg("success", " ✓") : "";
 			const prefix = isSelected ? theme.fg("accent", "→ ") : "  ";
-			const label = isSelected ? theme.fg("accent", option.mode) : theme.fg("text", option.mode);
+			const label = isSelected ? theme.fg("accent", option.label) : theme.fg("text", option.label);
 			this.listContainer.addChild(new Text(`${prefix}${label}${checkmark}`, 1, 0));
 			this.listContainer.addChild(new Text(theme.fg("muted", `    ${option.description}`), 1, 0));
 		}
@@ -84,7 +90,14 @@ export class PermissionModeSelectorComponent extends Container {
 			this.selectedIndex = Math.min(MODE_OPTIONS.length - 1, this.selectedIndex + 1);
 			this.updateList();
 		} else if (kb.matches(keyData, "tui.select.confirm") || keyData === "\n" || keyData === "\r") {
-			this.onSelect(MODE_OPTIONS[this.selectedIndex].mode);
+			const option = MODE_OPTIONS[this.selectedIndex];
+			if (option.action === "rules") {
+				this.onManageRules?.();
+				return;
+			}
+			if (option.mode) {
+				this.onSelect(option.mode);
+			}
 		} else if (kb.matches(keyData, "tui.select.cancel")) {
 			this.onCancel();
 		}

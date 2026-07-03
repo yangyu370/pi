@@ -86,7 +86,7 @@ import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
 import type { ModelRegistry } from "./model-registry.ts";
 import type { PermissionApprovalProvider, PermissionMode, Rule } from "./permissions/index.ts";
-import { PermissionService } from "./permissions/index.ts";
+import { type PermissionApprovalObserver, PermissionService } from "./permissions/index.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionManager } from "./session-manager.ts";
@@ -403,6 +403,10 @@ export class AgentSession {
 	setApprovalProvider(provider: PermissionApprovalProvider): void {
 		this._approvalProvider = provider;
 		this._permissions?.setApprovalProvider(provider);
+	}
+
+	setPermissionApprovalObserver(observer: PermissionApprovalObserver): void {
+		this._permissions?.setApprovalObserver(observer);
 	}
 
 	private async _getRequiredRequestAuth(model: Model<any>): Promise<{
@@ -1642,6 +1646,16 @@ export class AgentSession {
 	/** Sets the session permission mode; no-op when permissions are disabled. */
 	setPermissionMode(mode: PermissionMode): void {
 		this._permissions?.setMode(mode);
+	}
+
+	/** Current effective permission rules; empty when permissions are disabled. */
+	listPermissionRules(): Rule[] {
+		return this._permissions?.listEffectiveRules() ?? [];
+	}
+
+	/** Removes project-local permission rules; no-op when permissions are disabled. */
+	removeProjectLocalPermissionRules(rules: Rule[]): void {
+		this._permissions?.removeProjectLocalRules(rules);
 	}
 
 	/**

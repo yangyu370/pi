@@ -4,6 +4,8 @@ import { InteractiveApprovalProvider } from "../../src/modes/interactive/permiss
 import { initTheme } from "../../src/modes/interactive/theme/theme.ts";
 import { makeApprovalRequest } from "./approval-fixtures.ts";
 
+const AFTER_GRACE_MS = 251;
+
 // The overlay component styles text via the theme singleton, initialized once at startup in production.
 beforeAll(() => initTheme("dark"));
 
@@ -30,9 +32,11 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 describe("InteractiveApprovalProvider", () => {
 	it("resolves allow-once when the overlay confirms the first option", async () => {
 		const { ui, captured } = makeFakeUi();
-		const provider = new InteractiveApprovalProvider(ui);
+		let now = 0;
+		const provider = new InteractiveApprovalProvider(ui, { now: () => now });
 		const pending = provider.requestApproval(makeApprovalRequest());
 		await tick();
+		now += AFTER_GRACE_MS;
 		captured[0].component.handleInput("\n");
 		expect(await pending).toEqual({ type: "allow-once" });
 		expect(captured[0].handle.hide).toHaveBeenCalled();
@@ -40,10 +44,12 @@ describe("InteractiveApprovalProvider", () => {
 
 	it("propagates the rules of an always-allow choice", async () => {
 		const { ui, captured } = makeFakeUi();
-		const provider = new InteractiveApprovalProvider(ui);
+		let now = 0;
+		const provider = new InteractiveApprovalProvider(ui, { now: () => now });
 		const pending = provider.requestApproval(makeApprovalRequest());
 		await tick();
 		captured[0].component.handleInput("j");
+		now += AFTER_GRACE_MS;
 		captured[0].component.handleInput("\n");
 		expect(await pending).toEqual({
 			type: "always-allow",
@@ -55,24 +61,29 @@ describe("InteractiveApprovalProvider", () => {
 
 	it("resolves deny on cancel", async () => {
 		const { ui, captured } = makeFakeUi();
-		const provider = new InteractiveApprovalProvider(ui);
+		let now = 0;
+		const provider = new InteractiveApprovalProvider(ui, { now: () => now });
 		const pending = provider.requestApproval(makeApprovalRequest());
 		await tick();
+		now += AFTER_GRACE_MS;
 		captured[0].component.handleInput("\x1b");
 		expect(await pending).toEqual({ type: "deny", reason: "Denied by user" });
 	});
 
 	it("serializes concurrent requests: the second overlay opens only after the first closes", async () => {
 		const { ui, captured } = makeFakeUi();
-		const provider = new InteractiveApprovalProvider(ui);
+		let now = 0;
+		const provider = new InteractiveApprovalProvider(ui, { now: () => now });
 		const first = provider.requestApproval(makeApprovalRequest());
 		const second = provider.requestApproval(makeApprovalRequest());
 		await tick();
 		expect(captured).toHaveLength(1);
+		now += AFTER_GRACE_MS;
 		captured[0].component.handleInput("\n");
 		await first;
 		await tick();
 		expect(captured).toHaveLength(2);
+		now += AFTER_GRACE_MS;
 		captured[1].component.handleInput("\n");
 		await second;
 	});

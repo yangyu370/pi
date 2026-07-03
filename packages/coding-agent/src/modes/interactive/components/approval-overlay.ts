@@ -15,6 +15,7 @@ const COLLAPSED_DIFF_LINES = 3;
 const OVERLAY_CHROME_ROWS = 18;
 const FALLBACK_TERMINAL_ROWS = 24;
 const DENY_LABEL = "No, tell pi what to do differently";
+const DECISION_GRACE_MS = 250;
 
 type OverlayState = "choosing" | "typing-deny-reason";
 type ApprovalLineTone = "title" | "resource" | "text" | "danger" | "diff";
@@ -35,6 +36,7 @@ export interface ApprovalOverlayOptions {
 	onCancel: () => void;
 	/** Current terminal height; expanded diffs are clamped so controls stay visible. */
 	terminalRows?: () => number;
+	now?: () => number;
 }
 
 export function buildApprovalOptions(request: PermissionApprovalRequest): ApprovalOption[] {
@@ -80,6 +82,9 @@ function buildApprovalLineItems(
 				tone: "diff" as const,
 			})),
 		);
+		if (display.diffTruncated) {
+			lines.push({ text: "Diff preview truncated by core size limit.", tone: "danger" });
+		}
 	}
 	if (display.danger) {
 		const label = display.danger.level === "circuit-breaker" ? "CIRCUIT BREAKER" : "Warning";
@@ -170,6 +175,9 @@ export class ApprovalOverlayComponent extends Container {
 	private expandedDiff = false;
 	private readonly terminalRows: (() => number) | undefined;
 	private readonly hasDiff: boolean;
+	private readonly now: () => number;
+	private readonly openedAt: number;
+	private ignoredDecisionInput = false;
 
 	constructor(options: ApprovalOverlayOptions) {
 		super();
@@ -177,6 +185,8 @@ export class ApprovalOverlayComponent extends Container {
 		this.onSubmit = options.onSubmit;
 		this.onCancel = options.onCancel;
 		this.terminalRows = options.terminalRows;
+		this.now = options.now ?? Date.now;
+		this.openedAt = this.now();
 		this.hasDiff = (options.request.display.diffPreview?.length ?? 0) > 0;
 		this.options = buildApprovalOptions(options.request);
 		this.update();
@@ -246,6 +256,9 @@ export class ApprovalOverlayComponent extends Container {
 		}
 
 		this.addChild(new Spacer(1));
+		if (this.ignoredDecisionInput) {
+			this.addChild(new Text(theme.fg("warning", "Decision input ignored; try again."), 1, 0));
+		}
 		const diffHint = this.hasDiff ? `  ${keyHint("app.permission.diff.toggle", "diff")}` : "";
 		this.addChild(
 			new Text(
@@ -290,6 +303,15 @@ export class ApprovalOverlayComponent extends Container {
 		this.onSubmit({ type: "deny", reason: reason.length > 0 ? reason : DENY_REASON });
 	}
 
+	private isWithinDecisionGracePeriod(): boolean {
+		return this.now() - this.openedAt < DECISION_GRACE_MS;
+	}
+
+	private ignoreDecisionInput(): void {
+		this.ignoredDecisionInput = true;
+		this.update();
+	}
+
 	private handleDenyReasonInput(keyData: string): void {
 		const kb = getKeybindings();
 		if (kb.matches(keyData, "tui.select.cancel")) {
@@ -318,14 +340,26 @@ export class ApprovalOverlayComponent extends Container {
 		} else if (kb.matches(keyData, "tui.select.down") || keyData === "j") {
 			this.moveSelection(1);
 		} else if (kb.matches(keyData, "tui.select.confirm") || keyData === "\n" || keyData === "\r") {
+			if (this.isWithinDecisionGracePeriod()) {
+				this.ignoreDecisionInput();
+				return;
+			}
 			this.confirmSelected();
 		} else if (/^[1-9]$/.test(keyData)) {
+			if (this.isWithinDecisionGracePeriod()) {
+				this.ignoreDecisionInput();
+				return;
+			}
 			const index = Number.parseInt(keyData, 10) - 1;
 			if (index >= 0 && index < this.options.length) {
 				this.selectedIndex = index;
 				this.confirmSelected();
 			}
 		} else if (kb.matches(keyData, "tui.select.cancel")) {
+			if (this.isWithinDecisionGracePeriod()) {
+				this.ignoreDecisionInput();
+				return;
+			}
 			this.onCancel();
 		}
 	}

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -84,7 +84,11 @@ describe("PermissionService", () => {
 			const provider = new FakeApprovalProvider([
 				(req) => ({ type: "always-allow", rules: req.alwaysAllowChoices[0].rules }),
 			]);
-			const svc = make({ approvalProvider: provider });
+			const resolutions: unknown[] = [];
+			const svc = make({
+				approvalProvider: provider,
+				approvalObserver: (resolution) => resolutions.push(resolution),
+			});
 			const result = await svc.evaluate(
 				{ name: "edit" },
 				{ path: "foo.ts", edits: [{ oldText: "a", newText: "b" }] },
@@ -102,6 +106,8 @@ describe("PermissionService", () => {
 			});
 			// The suggested specifier was re-anchored to project-root-relative, not a bare abs path.
 			expect(provider.requests[0].alwaysAllowChoices[0].rules[0].specifier).toBe("/foo.ts");
+			expect(resolutions).toHaveLength(1);
+			expect(resolutions[0]).toMatchObject({ outcome: { type: "always-allow" }, persistResult: "persisted" });
 		});
 
 		it("blocks when the provider denies", async () => {
@@ -139,6 +145,69 @@ describe("PermissionService", () => {
 	});
 
 	describe("buildApprovalRequest", () => {
+		it("builds a real line-numbered diff preview for edit approvals", () => {
+			writeFileSync(join(cwd, "foo.ts"), "one\nold value\nthree\n", "utf8");
+			const svc = make();
+			const args = { path: "foo.ts", edits: [{ oldText: "old value", newText: "new value" }] };
+			const req = svc.buildApprovalRequest(svc.buildSnapshot("edit", args), args, []);
+
+			expect(req.display.diffPreview).toContain("-2 old value");
+			expect(req.display.diffPreview).toContain("+2 new value");
+			expect(req.display.diffPreview).toContain(" 1 one");
+			expect(req.display.diffPreview).toContain(" 3 three");
+		});
+
+		it("marks unmatched edit previews instead of showing a misleading replacement", () => {
+			writeFileSync(join(cwd, "foo.ts"), "one\nold value\nthree\n", "utf8");
+			const svc = make();
+			const args = { path: "foo.ts", edits: [{ oldText: "missing value", newText: "new value" }] };
+			const req = svc.buildApprovalRequest(svc.buildSnapshot("edit", args), args, []);
+
+			expect(req.display.diffPreview).toContain("edit 1: no match found");
+			expect(req.display.diffPreview).not.toContain("- missing value\n+ new value");
+		});
+
+		it("builds a real diff preview for write approvals over existing files", () => {
+			writeFileSync(join(cwd, "foo.ts"), "old\n", "utf8");
+			const svc = make();
+			const args = { path: "foo.ts", content: "new\n" };
+			const req = svc.buildApprovalRequest(svc.buildSnapshot("write", args), args, []);
+
+			expect(req.display.diffPreview).toContain("-1 old");
+			expect(req.display.diffPreview).toContain("+1 new");
+		});
+
+		it("keeps full write previews for the UI to expand", () => {
+			const svc = make();
+			const content = Array.from({ length: 25 }, (_, index) => `line ${index + 1}`).join("\n");
+			const args = { path: "new.ts", content };
+			const req = svc.buildApprovalRequest(svc.buildSnapshot("write", args), args, []);
+
+			expect(req.display.diffPreview).toContain("+25 line 25");
+			expect(req.display.diffTruncated).toBeUndefined();
+		});
+
+		it("omits duplicate command detail when the title already shows the whole command", () => {
+			const svc = make();
+			const args = { command: "ls -la" };
+			const req = svc.buildApprovalRequest(svc.buildSnapshot("bash", args), args, []);
+
+			expect(req.display.title).toBe("Run: ls -la");
+			expect(req.display.detail).toBe("");
+		});
+
+		it("shows formatted args for resource-less extension tools", () => {
+			const svc = make();
+			const args = { channel: "#general", text: "deploy?" };
+			const req = svc.buildApprovalRequest(svc.buildSnapshot("slack_send", args), args, [
+				{ tool: "slack_send", list: "allow" },
+			]);
+
+			expect(req.display.detail).toContain('"channel": "#general"');
+			expect(req.display.detail).toContain('"text": "deploy?"');
+			expect(req.alwaysAllowChoices[0].label).toBe("Always allow `slack_send` (all inputs)");
+		});
+
 		it("offers exact + widened choices for an edit, capped at 3", () => {
 			const svc = make();
 			const snap = svc.buildSnapshot("edit", { path: "src/foo.ts", edits: [{ oldText: "a", newText: "b" }] });
@@ -181,11 +250,42 @@ describe("PermissionService", () => {
 				svc.persistRules([
 					{ raw: "edit(/x.ts)", tool: "edit", specifier: "/x.ts", list: "allow", scope: "project-local" },
 				]),
-			).resolves.toBeUndefined();
+			).resolves.toBe("session-only");
 			expect(logged.length).toBeGreaterThan(0);
 			// The kept-in-session rule now participates in snapshots.
 			const snap = svc.buildSnapshot("edit", { path: "x.ts", edits: [] });
 			expect(snap.rules.some((r) => r.raw === "edit(/x.ts)")).toBe(true);
+		});
+
+		it("returns persisted when project-local rules are saved", async () => {
+			const svc = make();
+			await expect(
+				svc.persistRules([
+					{ raw: "edit(/x.ts)", tool: "edit", specifier: "/x.ts", list: "allow", scope: "project-local" },
+				]),
+			).resolves.toBe("persisted");
+		});
+	});
+
+	describe("rules lifecycle", () => {
+		it("lists effective rules and removes project-local rules immediately", async () => {
+			const svc = make({
+				cliRules: [{ raw: "bash(npm run *)", tool: "bash", specifier: "npm run *", list: "allow", scope: "cli" }],
+			});
+			const projectRule = {
+				raw: "bash(git push *)",
+				tool: "bash",
+				specifier: "git push *",
+				list: "allow",
+				scope: "project-local",
+			} as const;
+			await svc.persistRules([projectRule]);
+
+			expect(svc.listEffectiveRules().map((rule) => rule.raw)).toEqual(["bash(npm run *)", "bash(git push *)"]);
+
+			svc.removeProjectLocalRules([projectRule]);
+
+			expect(svc.listEffectiveRules().map((rule) => rule.raw)).toEqual(["bash(npm run *)"]);
 		});
 	});
 });

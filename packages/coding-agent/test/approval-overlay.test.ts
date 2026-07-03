@@ -6,6 +6,8 @@ import { ApprovalOverlayComponent } from "../src/modes/interactive/components/ap
 import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 
+const AFTER_GRACE_MS = 251;
+
 function makeApprovalRequest(overrides: Partial<PermissionApprovalRequest> = {}): PermissionApprovalRequest {
 	return {
 		display: {
@@ -271,12 +273,15 @@ describe("ApprovalOverlayComponent", () => {
 
 	it("accepts pasted multi-character input in the deny reason", () => {
 		const onSubmit = vi.fn();
+		let now = 0;
 		const component = new ApprovalOverlayComponent({
 			request: makeApprovalRequest(),
 			onSubmit,
 			onCancel: () => {},
+			now: () => now,
 		});
 
+		now += AFTER_GRACE_MS;
 		component.handleInput("3");
 		component.handleInput("use git pull --rebase instead");
 		component.handleInput("\r");
@@ -307,12 +312,15 @@ describe("ApprovalOverlayComponent", () => {
 
 	it("submits allow once by default", () => {
 		const onSubmit = vi.fn();
+		let now = 0;
 		const component = new ApprovalOverlayComponent({
 			request: makeApprovalRequest(),
 			onSubmit,
 			onCancel: () => {},
+			now: () => now,
 		});
 
+		now += AFTER_GRACE_MS;
 		component.handleInput("\r");
 
 		expect(onSubmit).toHaveBeenCalledWith({ type: "allow-once" });
@@ -321,13 +329,16 @@ describe("ApprovalOverlayComponent", () => {
 	it("submits the selected always allow choice", () => {
 		const onSubmit = vi.fn();
 		const request = makeApprovalRequest();
+		let now = 0;
 		const component = new ApprovalOverlayComponent({
 			request,
 			onSubmit,
 			onCancel: () => {},
+			now: () => now,
 		});
 
 		component.handleInput("\x1b[B");
+		now += AFTER_GRACE_MS;
 		component.handleInput("\r");
 
 		expect(onSubmit).toHaveBeenCalledWith({
@@ -339,12 +350,15 @@ describe("ApprovalOverlayComponent", () => {
 	it("submits numbered choices without enter", () => {
 		const onSubmit = vi.fn();
 		const request = makeApprovalRequest();
+		let now = 0;
 		const component = new ApprovalOverlayComponent({
 			request,
 			onSubmit,
 			onCancel: () => {},
+			now: () => now,
 		});
 
+		now += AFTER_GRACE_MS;
 		component.handleInput("2");
 
 		expect(onSubmit).toHaveBeenCalledWith({
@@ -356,14 +370,17 @@ describe("ApprovalOverlayComponent", () => {
 	it("collects a deny reason and lets escape return from reason input", () => {
 		const onSubmit = vi.fn();
 		const onCancel = vi.fn();
+		let now = 0;
 		const component = new ApprovalOverlayComponent({
 			request: makeApprovalRequest(),
 			onSubmit,
 			onCancel,
+			now: () => now,
 		});
 
 		component.handleInput("\x1b[B");
 		component.handleInput("\x1b[B");
+		now += AFTER_GRACE_MS;
 		component.handleInput("\r");
 		expect(stripAnsi(component.render(120).join("\n"))).toContain("Tell pi what to do differently");
 
@@ -371,6 +388,7 @@ describe("ApprovalOverlayComponent", () => {
 		expect(stripAnsi(component.render(120).join("\n"))).toContain("No, tell pi what to do differently");
 		expect(onCancel).not.toHaveBeenCalled();
 
+		now += AFTER_GRACE_MS;
 		component.handleInput("\r");
 		component.handleInput("u");
 		component.handleInput("s");
@@ -393,14 +411,17 @@ describe("ApprovalOverlayComponent", () => {
 	it("submits default deny when reason input is empty and cancels from choices on escape", () => {
 		const onSubmit = vi.fn();
 		const onCancel = vi.fn();
+		let now = 0;
 		const component = new ApprovalOverlayComponent({
 			request: makeApprovalRequest(),
 			onSubmit,
 			onCancel,
+			now: () => now,
 		});
 
 		component.handleInput("\x1b[B");
 		component.handleInput("\x1b[B");
+		now += AFTER_GRACE_MS;
 		component.handleInput("\r");
 		component.handleInput("\r");
 
@@ -411,9 +432,40 @@ describe("ApprovalOverlayComponent", () => {
 			request: makeApprovalRequest(),
 			onSubmit,
 			onCancel,
+			now: () => now,
 		});
+		now += AFTER_GRACE_MS;
 		escapeComponent.handleInput("\x1b");
 
 		expect(onCancel).toHaveBeenCalledOnce();
+	});
+
+	it("ignores decision inputs during the initial grace period while allowing navigation", () => {
+		const onSubmit = vi.fn();
+		const onCancel = vi.fn();
+		let now = 100;
+		const component = new ApprovalOverlayComponent({
+			request: makeApprovalRequest(),
+			onSubmit,
+			onCancel,
+			now: () => now,
+		});
+
+		component.handleInput("2");
+		component.handleInput("\r");
+		component.handleInput("\x1b");
+
+		expect(onSubmit).not.toHaveBeenCalled();
+		expect(onCancel).not.toHaveBeenCalled();
+		expect(stripAnsi(component.render(120).join("\n"))).toContain("input ignored");
+
+		component.handleInput("\x1b[B");
+		now += AFTER_GRACE_MS;
+		component.handleInput("\r");
+
+		expect(onSubmit).toHaveBeenCalledWith({
+			type: "always-allow",
+			rules: makeApprovalRequest().alwaysAllowChoices[0]?.rules,
+		});
 	});
 });

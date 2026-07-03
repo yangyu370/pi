@@ -78,7 +78,7 @@ import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.t
 import { createCompactionSummaryMessage } from "../../core/messages.ts";
 import { defaultModelPerProvider, findExactModelReferenceMatch, resolveModelScope } from "../../core/model-resolver.ts";
 import { DefaultPackageManager } from "../../core/package-manager.ts";
-import type { PermissionMode } from "../../core/permissions/index.ts";
+import type { PermissionApprovalResolution, PermissionMode } from "../../core/permissions/index.ts";
 import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "../../core/provider-display-names.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
@@ -117,6 +117,7 @@ import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { ModelSelectorComponent } from "./components/model-selector.ts";
 import { type AuthSelectorProvider, OAuthSelectorComponent } from "./components/oauth-selector.ts";
 import { PermissionModeSelectorComponent } from "./components/permission-mode-selector.ts";
+import { PermissionRulesSelectorComponent } from "./components/permission-rules-selector.ts";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
 import { SessionSelectorComponent } from "./components/session-selector.ts";
 import { SettingsSelectorComponent } from "./components/settings-selector.ts";
@@ -401,6 +402,27 @@ export class InteractiveMode {
 	private installApprovalProvider(): void {
 		this.approvalProvider = new InteractiveApprovalProvider(this.ui);
 		this.session.setApprovalProvider(this.approvalProvider);
+		this.session.setPermissionApprovalObserver((resolution) => this.recordPermissionApproval(resolution));
+	}
+
+	private recordPermissionApproval(resolution: PermissionApprovalResolution): void {
+		const { outcome, display, persistResult } = resolution;
+		if (outcome.type === "allow-once") {
+			this.showStatus(`approved: ${display.title}`);
+			return;
+		}
+		if (outcome.type === "deny") {
+			const reason = outcome.reason ? ` - "${outcome.reason}"` : "";
+			this.showStatus(`denied: ${display.title}${reason}`);
+			return;
+		}
+
+		const rules = outcome.rules.map((rule) => rule.raw).join(", ");
+		const suffix =
+			persistResult === "persisted"
+				? " - saved to project rules"
+				: " - active for this session only (failed to save)";
+		this.showStatus(`always-allowed: ${rules}${suffix}`);
 	}
 
 	constructor(runtimeHost: AgentSessionRuntime, options: InteractiveModeOptions = {}) {
@@ -4255,11 +4277,15 @@ export class InteractiveMode {
 	private handlePermissionCommand(arg: string): void {
 		const modes: PermissionMode[] = ["plan", "default", "acceptEdits", "dontAsk", "bypass"];
 		if (arg) {
+			if (arg === "rules") {
+				this.showPermissionRulesSelector();
+				return;
+			}
 			if ((modes as string[]).includes(arg)) {
 				this.session.setPermissionMode(arg as PermissionMode);
 				this.showStatus(`Permission mode: ${arg}`);
 			} else {
-				this.showStatus("Invalid mode. Use: plan, default, acceptEdits, dontAsk, bypass");
+				this.showStatus("Invalid mode. Use: plan, default, acceptEdits, dontAsk, bypass, rules");
 			}
 			return;
 		}
@@ -4270,6 +4296,34 @@ export class InteractiveMode {
 					this.session.setPermissionMode(mode);
 					done();
 					this.showStatus(`Permission mode: ${mode}`);
+				},
+				onManageRules: () => {
+					done();
+					this.showPermissionRulesSelector();
+				},
+				onCancel: () => {
+					done();
+					this.ui.requestRender();
+				},
+			});
+			return { component: selector, focus: selector };
+		});
+	}
+
+	private showPermissionRulesSelector(): void {
+		this.showSelector((done) => {
+			const selector = new PermissionRulesSelectorComponent({
+				projectPath: this.sessionManager.getCwd(),
+				rules: this.session.listPermissionRules(),
+				onDelete: (rules) => {
+					try {
+						this.session.removeProjectLocalPermissionRules(rules);
+						this.showStatus("Permission rule deleted");
+					} catch (error) {
+						this.showError(
+							`Could not delete permission rule: ${error instanceof Error ? error.message : String(error)}`,
+						);
+					}
 				},
 				onCancel: () => {
 					done();

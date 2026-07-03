@@ -6,6 +6,8 @@ import { ApprovalOverlayComponent } from "../src/modes/interactive/components/ap
 import { InteractiveApprovalProvider } from "../src/modes/interactive/permission-approval-provider.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
+const AFTER_GRACE_MS = 251;
+
 function makeApprovalRequest(): PermissionApprovalRequest {
 	return {
 		display: {
@@ -64,7 +66,8 @@ describe("InteractiveApprovalProvider", () => {
 
 	it("shows the approval overlay and resolves with the submitted outcome", async () => {
 		const host = new FakeOverlayHost();
-		const provider = new InteractiveApprovalProvider(host);
+		let now = 0;
+		const provider = new InteractiveApprovalProvider(host, { now: () => now });
 		const request = makeApprovalRequest();
 
 		const result = provider.requestApproval(request);
@@ -73,6 +76,7 @@ describe("InteractiveApprovalProvider", () => {
 		expect(host.handles[0]?.focus).toHaveBeenCalledOnce();
 
 		(host.components[0] as ApprovalOverlayComponent).handleInput("\x1b[B");
+		now += AFTER_GRACE_MS;
 		(host.components[0] as ApprovalOverlayComponent).handleInput("\r");
 
 		await expect(result).resolves.toEqual({
@@ -84,9 +88,11 @@ describe("InteractiveApprovalProvider", () => {
 
 	it("resolves cancel as deny", async () => {
 		const host = new FakeOverlayHost();
-		const provider = new InteractiveApprovalProvider(host);
+		let now = 0;
+		const provider = new InteractiveApprovalProvider(host, { now: () => now });
 
 		const result = provider.requestApproval(makeApprovalRequest());
+		now += AFTER_GRACE_MS;
 		(host.components[0] as ApprovalOverlayComponent).handleInput("\x1b");
 
 		await expect(result).resolves.toEqual({ type: "deny", reason: "Denied by user" });
@@ -95,16 +101,19 @@ describe("InteractiveApprovalProvider", () => {
 
 	it("serializes concurrent approval requests", async () => {
 		const host = new FakeOverlayHost();
-		const provider = new InteractiveApprovalProvider(host);
+		let now = 0;
+		const provider = new InteractiveApprovalProvider(host, { now: () => now });
 		const first = provider.requestApproval(makeApprovalRequest());
 		const second = provider.requestApproval(makeApprovalRequest());
 
 		expect(host.components).toHaveLength(1);
 
+		now += AFTER_GRACE_MS;
 		(host.components[0] as ApprovalOverlayComponent).handleInput("\r");
 		await expect(first).resolves.toEqual({ type: "allow-once" });
 
 		expect(host.components).toHaveLength(2);
+		now += AFTER_GRACE_MS;
 		(host.components[1] as ApprovalOverlayComponent).handleInput("\r");
 		await expect(second).resolves.toEqual({ type: "allow-once" });
 	});
