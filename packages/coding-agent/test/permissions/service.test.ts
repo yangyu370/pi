@@ -161,6 +161,14 @@ describe("PermissionService", () => {
 			expect(req.display.danger?.level).toBe("circuit-breaker");
 			expect(req.alwaysAllowChoices[0].rules[0].specifier).toBe("rm -rf ~");
 		});
+
+		it("titles a resource-less extension/custom tool as `Run <tool>`, not an empty edit", () => {
+			const svc = make();
+			const snap = svc.buildSnapshot("slack_send", { channel: "#general" });
+			expect(snap.resource.kind).toBe("none");
+			const req = svc.buildApprovalRequest(snap, { channel: "#general" }, []);
+			expect(req.display.title).toBe("Run slack_send");
+		});
 	});
 
 	describe("persistRules", () => {

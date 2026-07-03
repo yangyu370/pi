@@ -325,7 +325,9 @@ export class PermissionService {
 	private buildTitle(snapshot: PolicySnapshot): string {
 		const { resource, capability, tool } = snapshot;
 		if (resource.kind === "command") return `Run: ${resource.command}`;
-		const path = resource.kind === "paths" ? (resource.paths[0] ?? "") : "";
+		// Extension/MCP/custom tools carry no resource; name the tool instead of mislabeling it an edit.
+		if (resource.kind === "none") return `Run ${tool}`;
+		const path = resource.paths[0] ?? "";
 		if (capability === "read") return `Read ${path}`;
 		return tool === "write" ? `Write ${path}` : `Edit ${path}`;
 	}
