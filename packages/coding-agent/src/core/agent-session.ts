@@ -1628,6 +1628,11 @@ export class AgentSession {
 		this._permissions?.setMode(mode);
 	}
 
+	/** Injects the interactive approval UI; no-op when permissions are disabled. */
+	setApprovalProvider(provider: PermissionApprovalProvider): void {
+		this._permissions?.setApprovalProvider(provider);
+	}
+
 	/**
 	 * Cycle to next thinking level.
 	 * @returns New level, or undefined if model doesn't support thinking

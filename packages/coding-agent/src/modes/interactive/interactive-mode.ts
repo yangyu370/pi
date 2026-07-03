@@ -133,6 +133,7 @@ import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
 import { getModelSearchText } from "./model-search.ts";
+import { InteractiveApprovalProvider } from "./permission-approval-provider.ts";
 import {
 	getAvailableThemes,
 	getAvailableThemesWithPaths,
@@ -271,6 +272,7 @@ export interface InteractiveModeOptions {
 export class InteractiveMode {
 	private runtimeHost: AgentSessionRuntime;
 	private ui: TUI;
+	private readonly approvalProvider: InteractiveApprovalProvider;
 	private loadedResourcesContainer: Container;
 	private chatContainer: Container;
 	private pendingMessagesContainer: Container;
@@ -406,6 +408,8 @@ export class InteractiveMode {
 		this.version = VERSION;
 		this.ui = new TUI(new ProcessTerminal(), this.settingsManager.getShowHardwareCursor());
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
+		this.approvalProvider = new InteractiveApprovalProvider(this.ui);
+		this.session.setApprovalProvider(this.approvalProvider);
 		this.headerContainer = new Container();
 		this.loadedResourcesContainer = new Container();
 		this.chatContainer = new Container();
@@ -1647,6 +1651,8 @@ export class InteractiveMode {
 		this.unsubscribe?.();
 		this.unsubscribe = undefined;
 		this.applyRuntimeSettings();
+		// The reloaded session is a fresh instance with no provider — re-inject so prompts keep working.
+		this.session.setApprovalProvider(this.approvalProvider);
 		if (options.renderBeforeBind) {
 			this.renderCurrentSessionState();
 			this.subscribeToAgent();

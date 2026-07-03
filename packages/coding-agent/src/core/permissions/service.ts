@@ -120,7 +120,7 @@ export class PermissionService {
 	private readonly cliRules: Rule[];
 	/** Mutable: a failed persist falls back to appending here. */
 	private readonly sessionRules: Rule[];
-	private readonly approvalProvider?: PermissionApprovalProvider;
+	private approvalProvider?: PermissionApprovalProvider;
 	private readonly nonInteractiveDefault?: PermissionMode;
 	private readonly logger?: (msg: string) => void;
 
@@ -149,6 +149,11 @@ export class PermissionService {
 	/** Sets the session mode (not persisted across sessions). */
 	setMode(mode: PermissionMode): void {
 		this.modeOverride = mode;
+	}
+
+	/** Injects the interactive approval UI after construction (the TUI outlives session construction). */
+	setApprovalProvider(provider: PermissionApprovalProvider): void {
+		this.approvalProvider = provider;
 	}
 
 	/** Git toplevel of `cwd`, falling back to `cwd` on any error; cached. */
