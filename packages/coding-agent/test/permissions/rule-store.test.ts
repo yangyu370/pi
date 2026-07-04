@@ -1,6 +1,8 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	appendProjectLocalRules,
@@ -99,6 +101,73 @@ describe("rule-store — project-local persistence", () => {
 		expect(loadProjectLocalRules(agentDir, dirA).map((x) => x.list)).toEqual(["deny", "allow"]);
 		expect(loadProjectLocalRules(agentDir, dirB).map((x) => x.raw)).toEqual(["bash(git push *)"]);
 	});
+
+	it("leaves no temp or lock artifacts after a successful write", () => {
+		appendProjectLocalRules(agentDir, dirA, [rule("allow", "edit", "/foo.ts", "project-local")]);
+		const leftovers = readdirSync(agentDir).filter((name) => name !== "permissions.json");
+		expect(leftovers).toEqual([]);
+	});
+});
+
+describe("rule-store — cross-process atomicity", () => {
+	let tempDir: string;
+	let agentDir: string;
+	let dirA: string;
+
+	beforeEach(() => {
+		tempDir = join(tmpdir(), `rulestore-conc-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		agentDir = join(tempDir, "agent");
+		dirA = join(tempDir, "projA");
+		mkdirSync(agentDir, { recursive: true });
+		mkdirSync(dirA, { recursive: true });
+	});
+
+	afterEach(() => {
+		rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	it("does not lose rules when many processes append the same dir concurrently", async () => {
+		const storeUrl = new URL("../../src/core/permissions/rule-store.ts", import.meta.url).href;
+		const worker = join(tempDir, "worker.mjs");
+		writeFileSync(
+			worker,
+			[
+				`import { appendProjectLocalRules } from ${JSON.stringify(storeUrl)};`,
+				`const [agentDir, dir, n] = process.argv.slice(2);`,
+				`appendProjectLocalRules(agentDir, dir, [{ raw: 'edit(/f' + n + '.ts)', tool: 'edit', specifier: '/f' + n + '.ts', list: 'allow', scope: 'project-local' }]);`,
+			].join("\n"),
+			"utf8",
+		);
+
+		const tsxCli = fileURLToPath(new URL("../../../../node_modules/tsx/dist/cli.mjs", import.meta.url));
+		const COUNT = 8;
+		// Spawn all workers at once, then await them all — they genuinely race on
+		// the same file + lock (execFileSync would serialize and defeat the test).
+		const runs = Array.from(
+			{ length: COUNT },
+			(_, i) =>
+				new Promise<void>((resolvePromise, rejectPromise) => {
+					const child = spawn(process.execPath, [tsxCli, worker, agentDir, dirA, String(i)], { stdio: "pipe" });
+					let stderr = "";
+					child.stderr.on("data", (chunk) => {
+						stderr += String(chunk);
+					});
+					child.on("error", rejectPromise);
+					child.on("exit", (code) =>
+						code === 0 ? resolvePromise() : rejectPromise(new Error(`worker ${i} exited ${code}: ${stderr}`)),
+					);
+				}),
+		);
+		await Promise.all(runs);
+
+		const loaded = loadProjectLocalRules(agentDir, dirA)
+			.map((r) => r.raw)
+			.sort();
+		const expected = Array.from({ length: COUNT }, (_, i) => `edit(/f${i}.ts)`).sort();
+		expect(loaded).toEqual(expected);
+		expect(existsSync(join(agentDir, "permissions.json.lock"))).toBe(false);
+		expect(readdirSync(agentDir).filter((name) => name !== "permissions.json")).toEqual([]);
+	}, 30_000);
 });
 
 describe("mergeRules — layering + dedup", () => {

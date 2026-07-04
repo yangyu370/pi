@@ -17,7 +17,7 @@
  * ./types.ts).
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseRule } from "./rule-matcher.ts";
 import type { Rule, RuleList, Scope } from "./types.ts";
@@ -29,8 +29,94 @@ const FILE_NAME = "permissions.json";
 const VALID_LISTS: ReadonlySet<string> = new Set<RuleList>(["allow", "ask", "deny"]);
 const VALID_SCOPES: ReadonlySet<string> = new Set<Scope>(["cli", "project-local", "user", "session"]);
 
+/** Spin-lock acquisition budget and staleness threshold (ms). */
+const LOCK_TIMEOUT_MS = 5000;
+const LOCK_STALE_MS = 30_000;
+const LOCK_SPIN_MS = 20;
+
 function filePath(agentDir: string): string {
 	return join(agentDir, FILE_NAME);
+}
+
+function lockPath(agentDir: string): string {
+	return join(agentDir, `${FILE_NAME}.lock`);
+}
+
+/** Busy-waits for the spin-lock window without a timer (writes are rare + human-triggered). */
+function spinWait(deadline: number): void {
+	const until = Date.now() + LOCK_SPIN_MS;
+	while (Date.now() < until && Date.now() < deadline) {
+		// Intentionally tight: the lock holder is doing a single sync read-modify-write.
+	}
+}
+
+/**
+ * Cross-process mutex via an exclusive `mkdir` (atomic on POSIX + Windows). Spins
+ * until acquired or the timeout elapses; reclaims a lock whose directory mtime is
+ * older than {@link LOCK_STALE_MS} (a crashed holder). Throws on timeout so the
+ * caller keeps rules in-session rather than risking a torn write.
+ */
+function acquireLock(agentDir: string): string {
+	const lock = lockPath(agentDir);
+	const deadline = Date.now() + LOCK_TIMEOUT_MS;
+	mkdirSync(agentDir, { recursive: true });
+	for (;;) {
+		try {
+			mkdirSync(lock);
+			return lock;
+		} catch {
+			try {
+				if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) {
+					rmdirSync(lock);
+					continue;
+				}
+			} catch {
+				// Lock vanished between mkdir failure and stat: retry immediately.
+			}
+			if (Date.now() >= deadline) {
+				throw new Error(`permissions.json lock busy after ${LOCK_TIMEOUT_MS}ms`);
+			}
+			spinWait(deadline);
+		}
+	}
+}
+
+function releaseLock(lock: string): void {
+	try {
+		rmdirSync(lock);
+	} catch {
+		// Already gone (e.g. reclaimed as stale): nothing to release.
+	}
+}
+
+/**
+ * Writes `contents` to `target` atomically: a same-directory temp file is written
+ * then `rename`d over the target (atomic on the same filesystem, no EXDEV). Cleans
+ * up the temp file if the rename fails, then rethrows so the caller can fall back.
+ */
+function atomicWrite(target: string, contents: string): void {
+	const tmp = `${target}.${process.pid}.tmp`;
+	writeFileSync(tmp, contents, "utf8");
+	try {
+		renameSync(tmp, target);
+	} catch (err) {
+		try {
+			unlinkSync(tmp);
+		} catch {
+			// Best-effort cleanup; surface the original rename failure.
+		}
+		throw err;
+	}
+}
+
+/** Runs `mutate` under the file lock, always releasing it (even on throw). */
+function withLock<T>(agentDir: string, mutate: () => T): T {
+	const lock = acquireLock(agentDir);
+	try {
+		return mutate();
+	} finally {
+		releaseLock(lock);
+	}
 }
 
 /** Reads the raw path-keyed map; any read/parse failure degrades to `{}`. */
@@ -92,33 +178,38 @@ export function loadProjectLocalRules(agentDir: string, canonicalDir: string): R
 /**
  * Read-modify-writes `<agentDir>/permissions.json`, appending `rules` under
  * `canonicalDir` and de-duplicating by (raw, list). Existing entries win over
- * incoming duplicates. Throws on write failure (caller handles the fallback);
- * a pre-existing corrupt file is treated as empty rather than throwing.
+ * incoming duplicates. The whole read-modify-write runs under a cross-process
+ * file lock and commits via an atomic temp+rename, so a concurrent writer (a
+ * second agent process) can never lose rules or leave a torn file. Throws on
+ * write/lock failure (caller handles the fallback); a pre-existing corrupt file
+ * is treated as empty rather than throwing.
  */
 export function appendProjectLocalRules(agentDir: string, canonicalDir: string, rules: Rule[]): void {
-	const map = readFile(agentDir);
-	const existing = Array.isArray(map[canonicalDir]) ? map[canonicalDir] : [];
-	const seen = new Set<string>();
-	const merged: unknown[] = [];
-	for (const entry of [...existing, ...rules]) {
-		const key = rawListKey(entry);
-		if (seen.has(key)) continue;
-		seen.add(key);
-		merged.push(entry);
-	}
-	map[canonicalDir] = merged;
-	mkdirSync(agentDir, { recursive: true });
-	writeFileSync(filePath(agentDir), `${JSON.stringify(map, null, 2)}\n`, "utf8");
+	withLock(agentDir, () => {
+		const map = readFile(agentDir);
+		const existing = Array.isArray(map[canonicalDir]) ? map[canonicalDir] : [];
+		const seen = new Set<string>();
+		const merged: unknown[] = [];
+		for (const entry of [...existing, ...rules]) {
+			const key = rawListKey(entry);
+			if (seen.has(key)) continue;
+			seen.add(key);
+			merged.push(entry);
+		}
+		map[canonicalDir] = merged;
+		atomicWrite(filePath(agentDir), `${JSON.stringify(map, null, 2)}\n`);
+	});
 }
 
 /** Removes exact rules (matched by raw + list) from the project-local scope. Throws on write failure. */
 export function removeProjectLocalRules(agentDir: string, canonicalDir: string, rules: Rule[]): void {
-	const map = readFile(agentDir);
-	const existing = Array.isArray(map[canonicalDir]) ? map[canonicalDir] : [];
-	const removeKeys = new Set(rules.map((entry) => rawListKey(entry)));
-	map[canonicalDir] = existing.filter((entry) => !removeKeys.has(rawListKey(entry)));
-	mkdirSync(agentDir, { recursive: true });
-	writeFileSync(filePath(agentDir), `${JSON.stringify(map, null, 2)}\n`, "utf8");
+	withLock(agentDir, () => {
+		const map = readFile(agentDir);
+		const existing = Array.isArray(map[canonicalDir]) ? map[canonicalDir] : [];
+		const removeKeys = new Set(rules.map((entry) => rawListKey(entry)));
+		map[canonicalDir] = existing.filter((entry) => !removeKeys.has(rawListKey(entry)));
+		atomicWrite(filePath(agentDir), `${JSON.stringify(map, null, 2)}\n`);
+	});
 }
 
 /**
