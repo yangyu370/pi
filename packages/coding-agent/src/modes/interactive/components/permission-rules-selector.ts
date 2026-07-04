@@ -60,8 +60,16 @@ export class PermissionRulesSelectorComponent extends Container {
 		this.updateList();
 	}
 
+	// Items are laid out in the same grouped order they render in, so selectedIndex
+	// (moved by ↑↓) always matches the visible top-to-bottom position of the cursor.
 	private getItems(): RuleItem[] {
-		return this.rules.map((rule, index) => ({ rule, index }));
+		const items: RuleItem[] = [];
+		for (const scope of SCOPE_ORDER) {
+			for (const rule of this.rules) {
+				if (rule.scope === scope) items.push({ rule, index: items.length });
+			}
+		}
+		return items;
 	}
 
 	private selectedItem(): RuleItem | undefined {
@@ -77,13 +85,13 @@ export class PermissionRulesSelectorComponent extends Container {
 			return;
 		}
 
-		for (const scope of SCOPE_ORDER) {
-			const scopedItems = items.filter((item) => item.rule.scope === scope);
-			if (scopedItems.length === 0) continue;
-			this.listContainer.addChild(new Text(theme.fg("muted", SCOPE_LABELS[scope]), 1, 0));
-			for (const item of scopedItems) {
-				this.listContainer.addChild(new TruncatedText(this.formatRule(item), 1, 0));
+		let lastScope: Scope | undefined;
+		for (const item of items) {
+			if (item.rule.scope !== lastScope) {
+				lastScope = item.rule.scope;
+				this.listContainer.addChild(new Text(theme.fg("muted", SCOPE_LABELS[lastScope]), 1, 0));
 			}
+			this.listContainer.addChild(new TruncatedText(this.formatRule(item), 1, 0));
 		}
 	}
 

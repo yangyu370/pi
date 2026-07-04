@@ -228,15 +228,16 @@ export class PermissionService {
 
 	buildSnapshot(toolName: string, args: unknown): PolicySnapshot {
 		const workspaceRoot = this.resolveWorkspaceRoot();
+		const home = homedir();
 		return {
 			tool: toolName,
 			capability: getToolCapability(toolName),
-			resource: extractResource(toolName, args),
+			resource: extractResource(toolName, args, home),
 			mode: this.mode,
 			trusted: this.isTrusted(),
 			rules: this.listEffectiveRules(),
 			cwd: this.cwd,
-			home: homedir(),
+			home,
 			workspaceRoot,
 		};
 	}

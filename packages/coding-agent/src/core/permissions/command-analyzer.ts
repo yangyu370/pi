@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import type { CommandAccess } from "./types.ts";
 
 export const READONLY_COMMANDS: ReadonlySet<string> = new Set([
@@ -44,14 +45,19 @@ const CRITICAL_SYSTEM_PATH_PREFIXES: readonly string[] = [
 	"/etc",
 	"/usr",
 	"/bin",
+	"/sbin",
+	"/lib",
+	"/opt",
 	"/System",
 	"/Library",
 	"/var",
 	"/boot",
 	"/dev",
 	"/root",
+	"/private",
+	"/proc",
+	"/sys",
 ];
-const BRACED_HOME = "$" + "{HOME}";
 
 const GLOB_CHARS_RE = /[*?[]/;
 
@@ -251,21 +257,40 @@ function hasWriteCapableFlag(_program: string, _args: readonly Token[]): boolean
 	return false;
 }
 
-function criticalPathReason(target: string): string | undefined {
-	const stripped = target.replace(/\/+$/, "") || "/";
+// Matches ~, ~/…, $HOME[/…] and any ${HOME…} parameter expansion (e.g.
+// ${HOME:?err}, ${HOME:-x}, ${HOME/a/b}) while rejecting $HOMEDIR / ${HOMEDIR}.
+function referencesHome(path: string): boolean {
+	return (
+		path === "~" ||
+		path.startsWith("~/") ||
+		/^\$HOME(?![A-Za-z0-9_])/.test(path) ||
+		/^\$\{HOME(?![A-Za-z0-9_])/.test(path)
+	);
+}
+
+function criticalPathReason(target: string, homeDir?: string): string | undefined {
+	// Collapse "." / ".." segments so path traversal (e.g. /tmp/../etc) cannot
+	// slip a critical target past the checks below.
+	const stripped = posix.normalize(target).replace(/\/+$/, "") || "/";
 	const normalized = stripped.startsWith("/") ? stripped.replace(/^\/+/, "/") : stripped;
 	if (normalized === "/") {
 		return `rm/rmdir target is the filesystem root ("${target}")`;
 	}
-	if (
-		normalized === "~" ||
-		normalized.startsWith("~/") ||
-		normalized === "$HOME" ||
-		normalized.startsWith("$HOME/") ||
-		normalized === BRACED_HOME ||
-		normalized.startsWith(`${BRACED_HOME}/`)
-	) {
+	// A glob directly under root ("/*", "/?", "/[…]") expands to every top-level entry.
+	if (/^\/[*?[]/.test(normalized)) {
+		return `rm/rmdir target expands across the filesystem root ("${target}")`;
+	}
+	if (normalized === "." || normalized === "..") {
+		return `rm/rmdir target is the current or parent working directory ("${target}")`;
+	}
+	if (referencesHome(normalized)) {
 		return `rm/rmdir target is the home directory ("${target}")`;
+	}
+	if (homeDir && homeDir !== "/") {
+		const home = posix.normalize(homeDir).replace(/\/+$/, "");
+		if (home.length > 1 && (normalized === home || normalized.startsWith(`${home}/`))) {
+			return `rm/rmdir target is under the home directory ("${target}")`;
+		}
 	}
 	for (const prefix of CRITICAL_SYSTEM_PATH_PREFIXES) {
 		if (normalized === prefix || normalized.startsWith(`${prefix}/`)) {
@@ -302,7 +327,7 @@ function extractPathArgs(program: string, args: readonly Token[]): string[] {
 	return paths;
 }
 
-function analyzeSingleCommand(segment: string): CommandAccess {
+function analyzeSingleCommand(segment: string, homeDir?: string): CommandAccess {
 	const command = segment.trim();
 	const normalizedCommand = normalizeWhitespace(command);
 	const tokens = tokenizeWords(command);
@@ -329,7 +354,7 @@ function analyzeSingleCommand(segment: string): CommandAccess {
 	let circuitBreakerReason: string | undefined;
 	if (CIRCUIT_BREAKER_PROGRAMS.has(program)) {
 		for (const value of pathArgs) {
-			circuitBreakerReason = criticalPathReason(value);
+			circuitBreakerReason = criticalPathReason(value, homeDir);
 			if (circuitBreakerReason) break;
 		}
 	}
@@ -350,11 +375,74 @@ function analyzeSingleCommand(segment: string): CommandAccess {
 	};
 }
 
-export function analyzeBashCommand(command: string): CommandAccess[] {
+// Extract the bodies of command substitutions ($( ... ) and `...`) so a
+// destructive command hidden inside one (e.g. echo "$(rm -rf ~)") can still be
+// inspected. Single-quoted regions are literal and skipped.
+function extractCommandSubstitutions(command: string): string[] {
+	const bodies: string[] = [];
+	const n = command.length;
+	let i = 0;
+	let inSingle = false;
+	let inDouble = false;
+	while (i < n) {
+		const ch = command[i];
+		if (inSingle) {
+			if (ch === "'") inSingle = false;
+			i++;
+			continue;
+		}
+		if (ch === "\\") {
+			i += 2;
+			continue;
+		}
+		if (ch === "'" && !inDouble) {
+			inSingle = true;
+			i++;
+			continue;
+		}
+		if (ch === '"') {
+			inDouble = !inDouble;
+			i++;
+			continue;
+		}
+		if (ch === "$" && command[i + 1] === "(") {
+			let depth = 1;
+			let j = i + 2;
+			for (; j < n && depth > 0; j++) {
+				if (command[j] === "(") depth++;
+				else if (command[j] === ")") depth--;
+			}
+			bodies.push(command.slice(i + 2, depth === 0 ? j - 1 : j));
+			i = j;
+			continue;
+		}
+		if (ch === "`") {
+			const j = command.indexOf("`", i + 1);
+			if (j === -1) break;
+			bodies.push(command.slice(i + 1, j));
+			i = j + 1;
+			continue;
+		}
+		i++;
+	}
+	return bodies;
+}
+
+function scanSubstitutionsForCircuitBreaker(command: string, homeDir?: string): string | undefined {
+	for (const body of extractCommandSubstitutions(command)) {
+		for (const access of analyzeBashCommand(body, homeDir)) {
+			if (access.circuitBreakerReason) return access.circuitBreakerReason;
+		}
+	}
+	return undefined;
+}
+
+export function analyzeBashCommand(command: string, homeDir?: string): CommandAccess[] {
 	const { highRiskReason, segments } = splitTopLevel(command);
 	const trimmed = command.trim();
 
 	if (highRiskReason) {
+		const circuitBreakerReason = scanSubstitutionsForCircuitBreaker(command, homeDir);
 		return [
 			{
 				command: trimmed,
@@ -362,6 +450,7 @@ export function analyzeBashCommand(command: string): CommandAccess[] {
 				readPaths: [],
 				mutatePaths: [],
 				readonly: false,
+				...(circuitBreakerReason !== undefined ? { circuitBreakerReason } : {}),
 				highRiskReason,
 			},
 		];
@@ -377,5 +466,5 @@ export function analyzeBashCommand(command: string): CommandAccess[] {
 			},
 		];
 	}
-	return segments.map(analyzeSingleCommand);
+	return segments.map((segment) => analyzeSingleCommand(segment, homeDir));
 }

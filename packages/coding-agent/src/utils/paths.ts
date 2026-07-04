@@ -1,6 +1,6 @@
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve as nodeResolvePath, relative, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve as nodeResolvePath, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnProcessSync } from "./child-process.ts";
 
@@ -30,6 +30,31 @@ export function canonicalizePath(path: string): string {
 		return realpathSync(path);
 	} catch {
 		return path;
+	}
+}
+
+/**
+ * Resolve a path to a real location for a containment check, following
+ * symlinks on the deepest ancestor that exists. Unlike canonicalizePath, a
+ * not-yet-created leaf (e.g. a file about to be written) still inherits its
+ * parent directory's real path, so a symlinked parent cannot disguise an
+ * out-of-tree target. Both sides of a containment test must be passed through
+ * this so a symlinked root (e.g. macOS /tmp → /private/tmp) compares fairly.
+ */
+export function canonicalizeExistingAncestor(path: string): string {
+	const absolute = resolvePath(path);
+	let current = absolute;
+	const tail: string[] = [];
+	for (;;) {
+		try {
+			const real = realpathSync(current);
+			return tail.length > 0 ? join(real, ...tail.reverse()) : real;
+		} catch {
+			const parent = dirname(current);
+			if (parent === current) return absolute; // reached the root without resolving
+			tail.push(basename(current));
+			current = parent;
+		}
 	}
 }
 

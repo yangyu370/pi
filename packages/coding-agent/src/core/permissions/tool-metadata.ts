@@ -19,10 +19,10 @@ function readStringArg(args: unknown, key: string): string {
 	return "";
 }
 
-export function extractResource(toolName: string, args: unknown): Resource {
+export function extractResource(toolName: string, args: unknown, homeDir?: string): Resource {
 	if (toolName === "bash") {
 		const command = readStringArg(args, "command");
-		return { kind: "command", command, accesses: analyzeBashCommand(command) };
+		return { kind: "command", command, accesses: analyzeBashCommand(command, homeDir) };
 	}
 	if (READ_TOOLS.has(toolName)) {
 		const path = readStringArg(args, "path");

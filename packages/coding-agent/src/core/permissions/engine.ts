@@ -1,4 +1,4 @@
-import { resolvePath } from "../../utils/paths.ts";
+import { canonicalizeExistingAncestor, resolvePath } from "../../utils/paths.ts";
 import { matchBashCommand, matchPath, matchToolName, specifierHasWildcard } from "./rule-matcher.ts";
 import type { CheckResult, CommandAccess, Decision, PolicySnapshot, Resource, Rule } from "./types.ts";
 
@@ -101,9 +101,14 @@ function modeDefault(unit: Unit, snapshot: PolicySnapshot, anchors: Anchors): Un
 		case "acceptEdits": {
 			if (snapshot.capability === "mutate" && unit.kind === "paths") {
 				const targets = unit.paths.filter((p) => p.length > 0);
+				// Canonicalize both sides so a symlink inside the workspace pointing
+				// outside it can't pass a purely lexical containment check.
+				const canonicalRoot = canonicalizeExistingAncestor(anchors.workspaceRoot);
 				const allInRoot =
 					targets.length > 0 &&
-					targets.every((p) => isWithinRoot(resolveTarget(p, snapshot), anchors.workspaceRoot));
+					targets.every((p) =>
+						isWithinRoot(canonicalizeExistingAncestor(resolveTarget(p, snapshot)), canonicalRoot),
+					);
 				if (allInRoot) return { decision: "allow" };
 			}
 			return {

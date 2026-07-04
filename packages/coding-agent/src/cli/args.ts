@@ -139,9 +139,14 @@ export function parseArgs(args: string[]): Args {
 				.map((s) => s.trim())
 				.filter((name) => name.length > 0);
 		} else if (arg === "--permission-mode") {
-			const mode = i + 1 < args.length ? args[++i] : undefined;
-			if (mode !== undefined && isValidPermissionMode(mode)) {
-				result.permissionMode = mode;
+			// Only consume the next token as the mode when it is a bare value, never a
+			// following flag (e.g. `--permission-mode --allow x` must leave `--allow`
+			// to be parsed, not swallow it into an invalid mode).
+			const next = args[i + 1];
+			const looksLikeValue = next !== undefined && !next.startsWith("-");
+			if (looksLikeValue) i++;
+			if (looksLikeValue && isValidPermissionMode(next)) {
+				result.permissionMode = next;
 			} else {
 				result.diagnostics.push({ type: "error", message: PERMISSION_MODE_ERROR });
 			}
