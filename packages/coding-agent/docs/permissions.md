@@ -42,6 +42,8 @@ Within a path, `*` matches a single segment and `**` crosses directories.
 
 A `read(...)` deny or ask rule also binds bash commands that read those paths. `deny read(.env)` blocks both the `read` tool on `.env` and a `bash` call such as `cat .env`, because the analyzer extracts the file arguments of read-like commands (`cat`, `head`, `tail`, `grep`, `ls`).
 
+`edit(...)` and `write(...)` rules also bind bash commands that mutate detected paths (`rm`, `mv`, `cp`). Deny and ask rules trigger when any mutated path matches. Allow rules require every detected mutated path to match, so `allow edit(/tmp/**)` does not allow moving `/tmp/x` to `/etc/x`.
+
 ## Scopes and storage
 
 Rules come from four scopes, merged for every check:

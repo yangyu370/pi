@@ -44,6 +44,15 @@ describe("engine.check — pipeline order (spec §10)", () => {
 		expect(check(snap({ tool: "bash", resource: bash("cat .env"), mode: "bypass", rules })).decision).toBe("deny");
 	});
 
+	it("1. bash mutatePaths hitting an edit/write path deny → deny", () => {
+		for (const tool of ["edit", "write"]) {
+			const rules = [rule("deny", tool, "/secret/**")];
+			expect(
+				check(snap({ tool: "bash", resource: bash("rm /proj/secret/x"), mode: "bypass", rules })).decision,
+			).toBe("deny");
+		}
+	});
+
 	it("2. circuit breaker asks even under bypass and beats an explicit allow", () => {
 		const rules = [rule("allow", "bash", "rm *")];
 		const res = check(snap({ tool: "bash", resource: bash("rm -rf ~"), mode: "bypass", rules }));
@@ -121,6 +130,23 @@ describe("engine.check — pipeline order (spec §10)", () => {
 		expect(check(snap({ tool: "bash", resource: bash("cat x | grep y"), mode: "default", rules })).decision).toBe(
 			"allow",
 		);
+	});
+
+	it("4. bash mutatePaths hitting an edit/write path allow → allow", () => {
+		for (const tool of ["edit", "write"]) {
+			const rules = [rule("allow", tool, "/secret/**")];
+			expect(
+				check(snap({ tool: "bash", resource: bash("rm /proj/secret/x"), mode: "dontAsk", rules })).decision,
+			).toBe("allow");
+		}
+	});
+
+	it("4. bash mutatePaths allow requires every target to match", () => {
+		const rules = [rule("allow", "edit", "/secret/**")];
+		expect(
+			check(snap({ tool: "bash", resource: bash("mv /proj/secret/x /proj/public/x"), mode: "dontAsk", rules }))
+				.decision,
+		).toBe("deny");
 	});
 });
 

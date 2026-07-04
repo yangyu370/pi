@@ -53,6 +53,15 @@ function ruleApplies(rule: Rule, unit: Unit, snapshot: PolicySnapshot, anchors: 
 				matchPath(rule.specifier as string, resolveTarget(p, snapshot), anchors),
 			);
 		}
+		if (
+			(matchToolName(rule.tool, "edit") || matchToolName(rule.tool, "write")) &&
+			unit.access.mutatePaths.length > 0
+		) {
+			if (rule.specifier === undefined) return true;
+			const matches = (p: string): boolean =>
+				matchPath(rule.specifier as string, resolveTarget(p, snapshot), anchors);
+			return rule.list === "allow" ? unit.access.mutatePaths.every(matches) : unit.access.mutatePaths.some(matches);
+		}
 		return false;
 	}
 	if (unit.kind === "paths") {
