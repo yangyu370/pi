@@ -24,6 +24,7 @@ const rule = (list: Rule["list"], tool: string, specifier?: string): Rule => ({
 	list,
 	scope: "user",
 });
+const BRACED_HOME = "$" + "{HOME}";
 
 describe("engine.check — pipeline order (spec §10)", () => {
 	it("1. deny rule beats everything, even bypass", () => {
@@ -54,6 +55,22 @@ describe("engine.check — pipeline order (spec §10)", () => {
 		const res = check(snap({ tool: "bash", resource: bash("rm -rf ~"), mode: "bypass" }));
 		expect(res.decision).toBe("ask");
 		expect(res.suggestedRules ?? []).toEqual([]);
+	});
+
+	it("2. circuit-breaker catches escaped command separators and critical path variants under bypass", () => {
+		for (const command of [
+			String.raw`echo \"; rm -rf /etc; echo \"`,
+			`rm -rf ${BRACED_HOME}`,
+			"rm -rf //etc",
+			"rm -rf /var",
+			"rm -rf /boot",
+			"rm -rf /dev",
+			"rm -rf /root",
+		]) {
+			const res = check(snap({ tool: "bash", resource: bash(command), mode: "bypass" }));
+			expect(res.decision).toBe("ask");
+			expect(res.suggestedRules ?? []).toEqual([]);
+		}
 	});
 
 	it("2. composite with a circuit-breaker subcommand asks but suggests nothing", () => {

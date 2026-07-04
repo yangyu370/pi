@@ -20,7 +20,7 @@
  *   not reason about pipelines/subshells per-branch (known tradeoff:
  *   `cat x | grep y` asks even though both sides are read-only; see spec
  *   §11.1).
- * - `rm`/`rmdir` targeting `/`, the home dir (`~`/`$HOME`), or a key system
+ * - `rm`/`rmdir` targeting `/`, the home dir (`~`/`$HOME`/`${HOME}`), or a key system
  *   path trips the circuit breaker. This is a pure string function (no
  *   cwd/home passed in), so only literal forms are recognized — an absolute
  *   path that happens to resolve to the real home dir is not caught here;
@@ -65,7 +65,18 @@ const MUTATE_PATH_COMMANDS: ReadonlySet<string> = new Set(["rm", "mv", "cp"]);
 const CIRCUIT_BREAKER_PROGRAMS: ReadonlySet<string> = new Set(["rm", "rmdir"]);
 
 /** Absolute prefixes that are never safe `rm -rf` targets (spec §12: "关键系统路径...等"). */
-const CRITICAL_SYSTEM_PATH_PREFIXES: readonly string[] = ["/etc", "/usr", "/bin", "/System", "/Library"];
+const CRITICAL_SYSTEM_PATH_PREFIXES: readonly string[] = [
+	"/etc",
+	"/usr",
+	"/bin",
+	"/System",
+	"/Library",
+	"/var",
+	"/boot",
+	"/dev",
+	"/root",
+];
+const BRACED_HOME = "$" + "{HOME}";
 
 /** Shell glob metacharacters (pathname expansion) — deliberately excludes `{}` brace expansion. */
 const GLOB_CHARS_RE = /[*?[]/;
@@ -116,6 +127,15 @@ function tokenizeWords(text: string): Token[] {
 	while (i < n) {
 		const ch = text[i];
 		if (quote) {
+			if (quote === '"' && ch === "\\") {
+				const next = text[i + 1];
+				if (next !== undefined) {
+					value += next;
+					active = true;
+					i += 2;
+					continue;
+				}
+			}
 			if (ch === quote) {
 				quote = undefined;
 			} else {
@@ -131,6 +151,15 @@ function tokenizeWords(text: string): Token[] {
 			active = true;
 			i++;
 			continue;
+		}
+		if (ch === "\\") {
+			const next = text[i + 1];
+			if (next !== undefined) {
+				value += next;
+				active = true;
+				i += 2;
+				continue;
+			}
 		}
 		if (/\s/.test(ch)) {
 			pushToken();
@@ -183,6 +212,17 @@ function splitTopLevel(command: string): { highRiskReason?: string; segments: st
 	while (i < n) {
 		const ch = command[i];
 		if (quote) {
+			if (quote === '"' && ch === "\\") {
+				current += ch;
+				const next = command[i + 1];
+				if (next !== undefined) {
+					current += next;
+					i += 2;
+					continue;
+				}
+				i++;
+				continue;
+			}
 			current += ch;
 			if (ch === quote) {
 				quote = undefined;
@@ -201,6 +241,17 @@ function splitTopLevel(command: string): { highRiskReason?: string; segments: st
 		if (ch === '"' || ch === "'") {
 			quote = ch;
 			current += ch;
+			i++;
+			continue;
+		}
+		if (ch === "\\") {
+			current += ch;
+			const next = command[i + 1];
+			if (next !== undefined) {
+				current += next;
+				i += 2;
+				continue;
+			}
 			i++;
 			continue;
 		}
@@ -280,14 +331,22 @@ function hasWriteCapableFlag(_program: string, _args: readonly Token[]): boolean
  * the filesystem root, the home directory, or under a key system path.
  * Pure string matching only (no cwd/home resolution available here) — an
  * absolute path that happens to equal the real home directory is NOT
- * caught; only the literal `~`/`$HOME` forms are.
+ * caught; only the literal `~`/`$HOME`/`${HOME}` forms are.
  */
 function criticalPathReason(target: string): string | undefined {
-	const normalized = target.replace(/\/+$/, "") || "/";
+	const stripped = target.replace(/\/+$/, "") || "/";
+	const normalized = stripped.startsWith("/") ? stripped.replace(/^\/+/, "/") : stripped;
 	if (normalized === "/") {
 		return `rm/rmdir target is the filesystem root ("${target}")`;
 	}
-	if (normalized === "~" || normalized === "$HOME") {
+	if (
+		normalized === "~" ||
+		normalized.startsWith("~/") ||
+		normalized === "$HOME" ||
+		normalized.startsWith("$HOME/") ||
+		normalized === BRACED_HOME ||
+		normalized.startsWith(`${BRACED_HOME}/`)
+	) {
 		return `rm/rmdir target is the home directory ("${target}")`;
 	}
 	for (const prefix of CRITICAL_SYSTEM_PATH_PREFIXES) {

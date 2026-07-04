@@ -70,7 +70,7 @@ What still blocks headlessly: the circuit breaker (always denied when non-intera
 
 ## Circuit breaker
 
-Independent of the allow list, pi treats a few shell commands as too dangerous to auto-approve: `rm` or `rmdir` targeting the filesystem root (`/`), the home directory (`~` / `$HOME`), or a key system path (`/etc`, `/usr`, `/bin`, `/System`, `/Library`). These sit above the allow list — even an explicit `allow bash(rm *)` cannot silently pass one. Interactively the circuit breaker still asks; non-interactively it denies.
+Independent of the allow list, pi treats a few shell commands as too dangerous to auto-approve: `rm` or `rmdir` targeting the filesystem root (`/`), the home directory (`~` / `$HOME` / `${HOME}`), or a key system path (`/etc`, `/usr`, `/bin`, `/System`, `/Library`, `/var`, `/boot`, `/dev`, `/root`). These sit above the allow list — even an explicit `allow bash(rm *)` cannot silently pass one. Interactively the circuit breaker still asks; non-interactively it denies.
 
 This is a literal-string check on the command text, not a resolved-path check, so it guards against obvious mistakes rather than guaranteeing a path is safe.
 

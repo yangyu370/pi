@@ -5,6 +5,8 @@ import {
 	READONLY_COMMANDS,
 } from "../../src/core/permissions/command-analyzer.ts";
 
+const BRACED_HOME = "$" + "{HOME}";
+
 describe("analyzeBashCommand", () => {
 	it("splits on top-level && || ; and newline", () => {
 		const a = analyzeBashCommand("cd x && git status; ls -la");
@@ -29,6 +31,14 @@ describe("analyzeBashCommand", () => {
 	it("detects circuit breaker on rm of / and ~", () => {
 		expect(analyzeBashCommand("rm -rf /")[0].circuitBreakerReason).toBeTruthy();
 		expect(analyzeBashCommand("rm -rf ~")[0].circuitBreakerReason).toBeTruthy();
+		expect(analyzeBashCommand("rm -rf ~/.ssh")[0].circuitBreakerReason).toBeTruthy();
+		expect(analyzeBashCommand("rm -rf $HOME/.ssh")[0].circuitBreakerReason).toBeTruthy();
+		expect(analyzeBashCommand(`rm -rf ${BRACED_HOME}`)[0].circuitBreakerReason).toBeTruthy();
+		expect(analyzeBashCommand(`rm -rf ${BRACED_HOME}/.ssh`)[0].circuitBreakerReason).toBeTruthy();
+		expect(analyzeBashCommand("rm -rf //etc")[0].circuitBreakerReason).toBeTruthy();
+		for (const path of ["/var", "/boot", "/dev", "/root"]) {
+			expect(analyzeBashCommand(`rm -rf ${path}`)[0].circuitBreakerReason).toBeTruthy();
+		}
 		expect(analyzeBashCommand("rm -rf ./build")[0].circuitBreakerReason).toBeFalsy();
 	});
 	it("extracts simple read file args", () => {
@@ -65,6 +75,13 @@ describe("analyzeBashCommand — quoting (regression: double quotes do not suppr
 		const a = analyzeBashCommand('echo "a && b"');
 		expect(a).toHaveLength(1);
 		expect(a[0].command).toBe('echo "a && b"');
+	});
+
+	it("escaped quotes do not hide top-level command separators", () => {
+		const a = analyzeBashCommand(String.raw`echo \"; rm -rf /etc\"`);
+		expect(a).toHaveLength(2);
+		expect(a[0].readonly).toBe(true);
+		expect(a[1].readonly).toBe(false);
 	});
 });
 
