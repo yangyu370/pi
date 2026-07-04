@@ -46,6 +46,7 @@ export type KnownProvider =
 	| "cerebras"
 	| "openrouter"
 	| "vercel-ai-gateway"
+	| "whitepolar"
 	| "zai"
 	| "zai-coding-cn"
 	| "mistral"

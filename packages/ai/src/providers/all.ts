@@ -31,6 +31,7 @@ import { openrouterProvider } from "./openrouter.ts";
 import { openrouterImagesProvider } from "./openrouter-images.ts";
 import { togetherProvider } from "./together.ts";
 import { vercelAIGatewayProvider } from "./vercel-ai-gateway.ts";
+import { whitepolarProvider } from "./whitepolar.ts";
 import { xaiProvider } from "./xai.ts";
 import { xiaomiProvider } from "./xiaomi.ts";
 import { xiaomiTokenPlanAmsProvider } from "./xiaomi-token-plan-ams.ts";
@@ -97,6 +98,7 @@ export function builtinProviders(): Provider[] {
 		openrouterProvider(),
 		togetherProvider(),
 		vercelAIGatewayProvider(),
+		whitepolarProvider(),
 		xaiProvider(),
 		xiaomiProvider(),
 		xiaomiTokenPlanAmsProvider(),

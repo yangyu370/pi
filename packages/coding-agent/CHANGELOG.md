@@ -49,6 +49,15 @@
 - Changed the default OpenAI model to `gpt-5.5`.
 - Changed inherited OpenAI Codex Responses SSE response-header waits to use the configured HTTP timeout instead of the previous fixed 20 second timeout, reducing false timeouts on slow connections ([#4945](https://github.com/earendil-works/pi/issues/4945)).
 
+### Added
+
+- Added inherited Microsoft Foundry `*.ai.azure.com` endpoint support for Azure OpenAI Responses base URLs, including `/openai/v1/responses` suffix normalization ([#6004](https://github.com/earendil-works/pi/pull/6004) by [@gukoff](https://github.com/gukoff)).
+- Added inherited optional `reasoning` field to `Usage` reporting reasoning/thinking token counts ([#6057](https://github.com/earendil-works/pi/issues/6057)).
+
+### Changed
+
+- Changed the default OpenAI model from `gpt-5.4` to `gpt-5.5`.
+
 ### Fixed
 
 - Fixed inherited Claude Sonnet 5 metadata to use adaptive thinking payloads for Anthropic-compatible and Bedrock requests.
@@ -70,6 +79,11 @@
 - Fixed `--no-session --session-id` so ephemeral CLI runs can use deterministic session IDs for provider cache affinity ([#6070](https://github.com/earendil-works/pi/issues/6070)).
 - Fixed disk BMP image files to be detected, converted to PNG, and attached through `read` and CLI `@file` inputs ([#6047](https://github.com/earendil-works/pi/issues/6047)).
 - Fixed auto-retry for provider stream errors that explicitly tell callers to retry the request ([#6019](https://github.com/earendil-works/pi/issues/6019)).
+- Fixed session resume to show loaded resources (skills, prompts, extensions, themes) before restored chat messages ([#6048](https://github.com/earendil-works/pi/pull/6048) by [@haoqixu](https://github.com/haoqixu)).
+- Fixed startup benchmark timings to print after TUI shutdown instead of before, so terminal query replies do not intermix with timing output ([#6030](https://github.com/earendil-works/pi/issues/6030)).
+- Fixed inherited `streamSimple()` to send a context-aware max-token cap so providers that count input and output against one context window do not reject long requests ([#5595](https://github.com/earendil-works/pi/issues/5595)).
+- Fixed inherited OpenAI Responses streams to preserve reasoning replay state when output items finish out of order ([#6009](https://github.com/earendil-works/pi/issues/6009)).
+- Updated the bundled `undici` dependency for a vulnerability fix.
 
 ## [0.80.2] - 2026-06-23
 

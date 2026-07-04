@@ -72,6 +72,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **xAI**
 - **OpenRouter**
 - **Vercel AI Gateway**
+- **白极 (Whitepolar)** (OpenAI-compatible proxy)
 - **ZAI Coding Plan (Global)** (with separate China provider)
 - **MiniMax** (with separate China provider)
 - **Together AI**
@@ -398,6 +399,7 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | Together AI | `TOGETHER_API_KEY` |
 | OpenRouter | `OPENROUTER_API_KEY` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` |
+| 白极 (Whitepolar) | `WHITEPOLAR_API_KEY` |
 | ZAI Coding Plan (Global) | `ZAI_API_KEY` |
 | ZAI Coding Plan (China) | `ZAI_CODING_CN_API_KEY` |
 | MiniMax (Global) | `MINIMAX_API_KEY` |

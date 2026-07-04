@@ -3,7 +3,9 @@ import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/p
 import type { AgentSession } from "../../../core/agent-session.ts";
 import { areExperimentalFeaturesEnabled } from "../../../core/experimental.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
+import type { PermissionMode } from "../../../core/permissions/index.ts";
 import { theme } from "../theme/theme.ts";
+import { keyText } from "./keybinding-hints.ts";
 
 /**
  * Sanitize text for display in a single-line status.
@@ -26,6 +28,25 @@ function formatTokens(count: number): string {
 	if (count < 1000000) return `${Math.round(count / 1000)}k`;
 	if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`;
 	return `${Math.round(count / 1000000)}M`;
+}
+
+function formatPermissionModeIndicator(mode: PermissionMode | undefined, width: number): string | undefined {
+	if (mode === undefined || mode === "default") {
+		return undefined;
+	}
+
+	const compact = width < 40;
+	const cycleKey = keyText("app.permission.mode.cycle") || "shift+tab";
+	if (mode === "acceptEdits") {
+		return theme.fg("accent", compact ? ">>" : `>> accept edits on (${cycleKey} to cycle)`);
+	}
+	if (mode === "plan") {
+		return theme.fg("accent", compact ? "||" : `|| plan mode on (${cycleKey} to cycle)`);
+	}
+	if (mode === "dontAsk") {
+		return theme.fg("error", compact ? "x" : "x dont-ask on - unapproved tools auto-denied");
+	}
+	return theme.fg("error", compact ? "!" : "! bypass permissions on");
 }
 
 export function formatCwdForFooter(cwd: string, home: string | undefined): string {
@@ -130,6 +151,8 @@ export class FooterComponent implements Component {
 
 		// Build stats line
 		const statsParts = [];
+		const permissionIndicator = formatPermissionModeIndicator(this.session.getPermissionMode(), width);
+		if (permissionIndicator) statsParts.push(permissionIndicator);
 		if (totalInput) statsParts.push(`↑${formatTokens(totalInput)}`);
 		if (totalOutput) statsParts.push(`↓${formatTokens(totalOutput)}`);
 		if (totalCacheRead) statsParts.push(`R${formatTokens(totalCacheRead)}`);

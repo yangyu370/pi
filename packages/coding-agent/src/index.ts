@@ -184,6 +184,17 @@ export type {
 	ResolvedResource,
 } from "./core/package-manager.ts";
 export { DefaultPackageManager } from "./core/package-manager.ts";
+export {
+	type AlwaysAllowChoice,
+	type ApprovalDisplay,
+	type Capability,
+	PERMISSION_APPROVAL_CONTRACT_VERSION,
+	type PermissionApprovalOutcome,
+	type PermissionApprovalProvider,
+	type PermissionApprovalRequest,
+	type Scope,
+	type SuggestedRule,
+} from "./core/permissions/index.ts";
 export type { ResourceCollision, ResourceDiagnostic, ResourceLoader } from "./core/resource-loader.ts";
 export { DefaultResourceLoader, loadProjectContextFiles } from "./core/resource-loader.ts";
 // SDK for programmatic usage

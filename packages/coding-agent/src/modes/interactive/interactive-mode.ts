@@ -78,6 +78,7 @@ import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.t
 import { createCompactionSummaryMessage } from "../../core/messages.ts";
 import { defaultModelPerProvider, findExactModelReferenceMatch, resolveModelScope } from "../../core/model-resolver.ts";
 import { DefaultPackageManager } from "../../core/package-manager.ts";
+import type { PermissionApprovalResolution, PermissionMode } from "../../core/permissions/index.ts";
 import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "../../core/provider-display-names.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
@@ -116,6 +117,8 @@ import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./c
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { ModelSelectorComponent } from "./components/model-selector.ts";
 import { type AuthSelectorProvider, OAuthSelectorComponent } from "./components/oauth-selector.ts";
+import { PermissionModeSelectorComponent } from "./components/permission-mode-selector.ts";
+import { PermissionRulesSelectorComponent } from "./components/permission-rules-selector.ts";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
 import { SessionSelectorComponent } from "./components/session-selector.ts";
 import { SettingsSelectorComponent } from "./components/settings-selector.ts";
@@ -134,6 +137,8 @@ import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
 import { getModelSearchText } from "./model-search.ts";
+import { InteractiveApprovalProvider } from "./permission-approval-provider.ts";
+import { nextPermissionModeForCycle } from "./permission-mode-cycle.ts";
 import {
 	getAvailableThemes,
 	getAvailableThemesWithPaths,
@@ -385,6 +390,7 @@ export class InteractiveMode {
 	private options: InteractiveModeOptions;
 	private autoTrustOnReloadCwd: string | undefined;
 	private themeController: InteractiveThemeController;
+	private approvalProvider: InteractiveApprovalProvider | undefined;
 
 	// Convenience accessors
 	private get session(): AgentSession {
@@ -400,18 +406,58 @@ export class InteractiveMode {
 		return this.session.settingsManager;
 	}
 
+	private installApprovalProvider(): void {
+		this.approvalProvider = new InteractiveApprovalProvider(this.ui);
+		this.session.setApprovalProvider(this.approvalProvider);
+		this.session.setPermissionApprovalObserver((resolution) => this.recordPermissionApproval(resolution));
+	}
+
+	private recordPermissionApproval(resolution: PermissionApprovalResolution): void {
+		const { outcome, display, persistResult } = resolution;
+		if (outcome.type === "allow-once") {
+			this.appendPermissionRecord(`approved: ${display.title}`);
+			return;
+		}
+		if (outcome.type === "deny") {
+			const reason = outcome.reason ? ` - "${outcome.reason}"` : "";
+			this.appendPermissionRecord(`denied: ${display.title}${reason}`);
+			return;
+		}
+
+		const rules = outcome.rules.map((rule) => rule.raw).join(", ");
+		const suffix =
+			persistResult === "persisted"
+				? " - saved to project rules"
+				: " - active for this session only (failed to save)";
+		this.appendPermissionRecord(`always-allowed: ${rules}${suffix}`);
+	}
+
+	/**
+	 * Appends a permanent approval-audit line to the chat. Unlike showStatus this
+	 * never collapses into (or gets overwritten by) an adjacent status line, so a
+	 * run of consecutive approvals each leaves its own record.
+	 */
+	private appendPermissionRecord(message: string): void {
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(theme.fg("dim", message), 1, 0));
+		this.ui.requestRender();
+	}
+
 	constructor(runtimeHost: AgentSessionRuntime, options: InteractiveModeOptions = {}) {
 		this.runtimeHost = runtimeHost;
 		this.options = options;
 		this.autoTrustOnReloadCwd = options.autoTrustOnReloadCwd;
 		this.runtimeHost.setBeforeSessionInvalidate(() => {
+			this.approvalProvider?.abortPending();
 			this.resetExtensionUI();
 		});
 		this.runtimeHost.setRebindSession(async () => {
+			this.installApprovalProvider();
 			await this.rebindCurrentSession({ renderBeforeBind: true });
 		});
 		this.version = VERSION;
 		this.ui = new TUI(new ProcessTerminal(), this.settingsManager.getShowHardwareCursor());
+		this.installApprovalProvider();
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
 		this.headerContainer = new Container();
 		this.loadedResourcesContainer = new Container();
@@ -689,7 +735,7 @@ export class InteractiveMode {
 				hint("app.exit", "to exit (empty)"),
 				hint("app.suspend", "to suspend"),
 				keyHint("tui.editor.deleteToLineEnd", "to delete to end"),
-				hint("app.thinking.cycle", "to cycle thinking level"),
+				hint("app.permission.mode.cycle", "to cycle permission mode"),
 				rawKeyHint(`${keyText("app.model.cycleForward")}/${keyText("app.model.cycleBackward")}`, "to cycle models"),
 				hint("app.model.select", "to select model"),
 				hint("app.tools.expand", "to expand tools"),
@@ -1654,6 +1700,12 @@ export class InteractiveMode {
 		this.unsubscribe?.();
 		this.unsubscribe = undefined;
 		this.applyRuntimeSettings();
+		// The reloaded session is a fresh instance with no provider/observer — re-inject
+		// both, so prompts keep working AND approvals keep being recorded (audit trail).
+		if (this.approvalProvider) {
+			this.session.setApprovalProvider(this.approvalProvider);
+			this.session.setPermissionApprovalObserver((resolution) => this.recordPermissionApproval(resolution));
+		}
 		if (options.renderBeforeBind) {
 			this.renderCurrentSessionState();
 			this.subscribeToAgent();
@@ -2504,6 +2556,7 @@ export class InteractiveMode {
 		this.defaultEditor.onCtrlD = () => this.handleCtrlD();
 		this.defaultEditor.onAction("app.suspend", () => this.handleCtrlZ());
 		this.defaultEditor.onAction("app.thinking.cycle", () => this.cycleThinkingLevel());
+		this.defaultEditor.onAction("app.permission.mode.cycle", () => this.cyclePermissionMode());
 		this.defaultEditor.onAction("app.model.cycleForward", () => this.cycleModel("forward"));
 		this.defaultEditor.onAction("app.model.cycleBackward", () => this.cycleModel("backward"));
 
@@ -2636,6 +2689,12 @@ export class InteractiveMode {
 			if (text === "/trust") {
 				this.showTrustSelector();
 				this.editor.setText("");
+				return;
+			}
+			if (text === "/permission" || text.startsWith("/permission ")) {
+				const arg = text.startsWith("/permission ") ? text.slice("/permission ".length).trim() : "";
+				this.editor.setText("");
+				this.handlePermissionCommand(arg);
 				return;
 			}
 			if (text === "/login") {
@@ -3855,6 +3914,7 @@ export class InteractiveMode {
 		if (allQueued.length === 0) {
 			this.updatePendingMessagesDisplay();
 			if (options?.abort) {
+				this.approvalProvider?.abortPending();
 				this.agent.abort();
 			}
 			return 0;
@@ -3865,6 +3925,7 @@ export class InteractiveMode {
 		this.editor.setText(combinedText);
 		this.updatePendingMessagesDisplay();
 		if (options?.abort) {
+			this.approvalProvider?.abortPending();
 			this.agent.abort();
 		}
 		return allQueued.length;
@@ -4277,6 +4338,82 @@ export class InteractiveMode {
 			);
 			return false;
 		}
+	}
+
+	private handlePermissionCommand(arg: string): void {
+		const modes: PermissionMode[] = ["plan", "default", "acceptEdits", "dontAsk", "bypass"];
+		if (arg) {
+			if (arg === "rules") {
+				this.showPermissionRulesSelector();
+				return;
+			}
+			if ((modes as string[]).includes(arg)) {
+				this.session.setPermissionMode(arg as PermissionMode);
+				this.showStatus(`Permission mode: ${arg}`);
+			} else {
+				this.showStatus("Invalid mode. Use: plan, default, acceptEdits, dontAsk, bypass, rules");
+			}
+			return;
+		}
+		this.showSelector((done) => {
+			const selector = new PermissionModeSelectorComponent({
+				current: this.session.getPermissionMode() ?? "default",
+				onSelect: (mode) => {
+					this.session.setPermissionMode(mode);
+					done();
+					this.showStatus(`Permission mode: ${mode}`);
+				},
+				onManageRules: () => {
+					done();
+					this.showPermissionRulesSelector();
+				},
+				onCancel: () => {
+					done();
+					this.ui.requestRender();
+				},
+			});
+			return { component: selector, focus: selector };
+		});
+	}
+
+	private showPermissionRulesSelector(): void {
+		this.showSelector((done) => {
+			const selector = new PermissionRulesSelectorComponent({
+				projectPath: this.sessionManager.getCwd(),
+				rules: this.session.listPermissionRules(),
+				onDelete: (rules) => {
+					try {
+						this.session.removeProjectLocalPermissionRules(rules);
+						// Re-read the merged effective set so a rule that still applies via a
+						// lower-priority scope resurfaces instead of silently looking deleted.
+						selector.refresh(this.session.listPermissionRules());
+						this.showStatus("Permission rule deleted");
+					} catch (error) {
+						this.showError(
+							`Could not delete permission rule: ${error instanceof Error ? error.message : String(error)}`,
+						);
+					}
+				},
+				onCancel: () => {
+					done();
+					this.ui.requestRender();
+				},
+			});
+			return { component: selector, focus: selector };
+		});
+	}
+
+	private cyclePermissionMode(): void {
+		const current = this.session.getPermissionMode();
+		if (current === undefined) {
+			this.showStatus("Permissions are disabled");
+			return;
+		}
+
+		const next = nextPermissionModeForCycle(current);
+		this.session.setPermissionMode(next);
+		this.showStatus(`Permission mode: ${next}`);
+		this.ui.requestRender();
 	}
 
 	private showTrustSelector(): void {
@@ -5507,7 +5644,7 @@ export class InteractiveMode {
 		const clear = this.getAppKeyDisplay("app.clear");
 		const exit = this.getAppKeyDisplay("app.exit");
 		const suspend = this.getAppKeyDisplay("app.suspend");
-		const cycleThinkingLevel = this.getAppKeyDisplay("app.thinking.cycle");
+		const cyclePermissionMode = this.getAppKeyDisplay("app.permission.mode.cycle");
 		const cycleModelForward = this.getAppKeyDisplay("app.model.cycleForward");
 		const selectModel = this.getAppKeyDisplay("app.model.select");
 		const expandTools = this.getAppKeyDisplay("app.tools.expand");
@@ -5551,7 +5688,7 @@ export class InteractiveMode {
 | \`${clear}\` | Clear editor (first) / exit (second) |
 | \`${exit}\` | Exit (when editor is empty) |
 | \`${suspend}\` | Suspend to background |
-| \`${cycleThinkingLevel}\` | Cycle thinking level |
+| \`${cyclePermissionMode}\` | Cycle permission mode |
 | \`${cycleModelForward}\` / \`${cycleModelBackward}\` | Cycle models |
 | \`${selectModel}\` | Open model selector |
 | \`${expandTools}\` | Toggle tool output expansion |
@@ -5760,6 +5897,7 @@ export class InteractiveMode {
 	}
 
 	stop(): void {
+		this.approvalProvider?.abortPending();
 		if (this.settingsManager.getShowTerminalProgress()) {
 			this.ui.terminal.setProgress(false);
 		}

@@ -6,6 +6,7 @@ import { resolvePath } from "../utils/paths.ts";
 import { AuthStorage } from "./auth-storage.ts";
 import type { SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { ModelRegistry } from "./model-registry.ts";
+import type { PermissionApprovalProvider } from "./permissions/index.ts";
 import {
 	DefaultResourceLoader,
 	type DefaultResourceLoaderOptions,
@@ -63,6 +64,9 @@ export interface CreateAgentSessionFromServicesOptions {
 	excludeTools?: CreateAgentSessionOptions["excludeTools"];
 	noTools?: CreateAgentSessionOptions["noTools"];
 	customTools?: ToolDefinition[];
+	approvalProvider?: PermissionApprovalProvider;
+	permissionMode?: CreateAgentSessionOptions["permissionMode"];
+	permissionRules?: CreateAgentSessionOptions["permissionRules"];
 }
 
 /**
@@ -203,5 +207,8 @@ export async function createAgentSessionFromServices(
 		noTools: options.noTools,
 		customTools: options.customTools,
 		sessionStartEvent: options.sessionStartEvent,
+		approvalProvider: options.approvalProvider,
+		permissionMode: options.permissionMode,
+		permissionRules: options.permissionRules,
 	});
 }
