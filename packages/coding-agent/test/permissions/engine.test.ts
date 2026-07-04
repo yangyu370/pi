@@ -132,12 +132,22 @@ describe("engine.check — pipeline order (spec §10)", () => {
 		);
 	});
 
-	it("4. bash mutatePaths hitting an edit/write path allow → allow", () => {
+	it("4. bash mutatePaths hitting an edit/write path allow → allow (non-destructive mutation)", () => {
+		for (const tool of ["edit", "write"]) {
+			const rules = [rule("allow", tool, "/secret/**")];
+			expect(
+				check(snap({ tool: "bash", resource: bash("cp /proj/secret/a /proj/secret/b"), mode: "dontAsk", rules }))
+					.decision,
+			).toBe("allow");
+		}
+	});
+
+	it("4. an edit/write allow does NOT authorize a bash delete (rm)", () => {
 		for (const tool of ["edit", "write"]) {
 			const rules = [rule("allow", tool, "/secret/**")];
 			expect(
 				check(snap({ tool: "bash", resource: bash("rm /proj/secret/x"), mode: "dontAsk", rules })).decision,
-			).toBe("allow");
+			).toBe("deny");
 		}
 	});
 

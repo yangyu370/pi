@@ -57,6 +57,10 @@ function ruleApplies(rule: Rule, unit: Unit, snapshot: PolicySnapshot, anchors: 
 			(matchToolName(rule.tool, "edit") || matchToolName(rule.tool, "write")) &&
 			unit.access.mutatePaths.length > 0
 		) {
+			// Deleting a file is not editing it: an edit/write allow rule must not
+			// silently authorize a bash delete (rm/rmdir). Deny rules still apply so
+			// a protective deny(edit ...) keeps catching deletions.
+			if (rule.list === "allow" && unit.access.deletesPaths) return false;
 			if (rule.specifier === undefined) return true;
 			const matches = (p: string): boolean =>
 				matchPath(rule.specifier as string, resolveTarget(p, snapshot), anchors);

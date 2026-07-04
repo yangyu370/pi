@@ -344,11 +344,16 @@ export class PermissionService {
 
 			if (isMutate && specifier !== undefined && choices.length < MAX_CHOICES) {
 				const wide = widenToDirectory(specifier);
-				choices.push({
-					id: `allow-${id++}`,
-					label: wide === "/**" ? "Always allow edits in this workspace" : `Always allow edits under \`${wide}\``,
-					rules: [makeSuggestedRule(s.tool, wide)],
-				});
+				// Editing a workspace-root-level file widens to `/**` (the entire
+				// workspace) — far broader than the resource in front of the user, so
+				// we don't offer it. Only the exact single-file allow remains.
+				if (wide !== "/**") {
+					choices.push({
+						id: `allow-${id++}`,
+						label: `Always allow edits under \`${wide}\``,
+						rules: [makeSuggestedRule(s.tool, wide)],
+					});
+				}
 			}
 		}
 		return choices;

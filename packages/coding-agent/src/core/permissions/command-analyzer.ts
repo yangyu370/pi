@@ -17,7 +17,22 @@ export const READONLY_COMMANDS: ReadonlySet<string> = new Set([
 
 const READONLY_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set(["status", "diff", "log", "show"]);
 
-const HIGH_RISK_LEADING_PROGRAMS: ReadonlySet<string> = new Set(["watch", "setsid", "ionice", "flock"]);
+const HIGH_RISK_LEADING_PROGRAMS: ReadonlySet<string> = new Set([
+	"watch",
+	"setsid",
+	"ionice",
+	"flock",
+	// Wrapper programs run another command indirectly; the analyzer only inspects
+	// the leading token, so the real program stays hidden. Treat them as high-risk
+	// so they can never be auto-approved as "readonly" or matched by a wildcard rule.
+	"sudo",
+	"doas",
+	"env",
+	"xargs",
+	"timeout",
+	"nice",
+	"nohup",
+]);
 
 const READ_PATH_COMMANDS: ReadonlySet<string> = new Set(["cat", "head", "tail", "grep", "ls"]);
 
@@ -329,6 +344,7 @@ function analyzeSingleCommand(segment: string): CommandAccess {
 		readPaths: READ_PATH_COMMANDS.has(program) ? pathArgs : [],
 		mutatePaths: MUTATE_PATH_COMMANDS.has(program) ? pathArgs : [],
 		readonly,
+		deletesPaths: CIRCUIT_BREAKER_PROGRAMS.has(program),
 		circuitBreakerReason,
 		highRiskReason,
 	};

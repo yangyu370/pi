@@ -97,6 +97,32 @@ function readFile(agentDir: string): PermissionsFile {
 	}
 }
 
+/**
+ * Read the store for a write (append/remove). Unlike readFile, a file that
+ * EXISTS but is unreadable/unparseable throws instead of returning {} — so a
+ * corrupt permissions.json is never silently overwritten, which would destroy
+ * every project's saved rules. An absent file is fine (the first write).
+ */
+function readFileForWrite(agentDir: string): PermissionsFile {
+	let raw: string;
+	try {
+		raw = readFileSync(filePath(agentDir), "utf8");
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code === "ENOENT") return {};
+		throw err; // real read error — refuse to clobber
+	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		throw new Error("permissions.json is corrupt (invalid JSON); refusing to overwrite it");
+	}
+	if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+		return parsed as PermissionsFile;
+	}
+	throw new Error("permissions.json has an unexpected shape; refusing to overwrite it");
+}
+
 function rawListKey(entry: unknown): string {
 	if (entry !== null && typeof entry === "object") {
 		const e = entry as Record<string, unknown>;
@@ -134,7 +160,7 @@ export function loadProjectLocalRules(agentDir: string, canonicalDir: string): R
 
 export function appendProjectLocalRules(agentDir: string, canonicalDir: string, rules: Rule[]): void {
 	withLock(agentDir, () => {
-		const map = readFile(agentDir);
+		const map = readFileForWrite(agentDir);
 		const existing = Array.isArray(map[canonicalDir]) ? map[canonicalDir] : [];
 		const seen = new Set<string>();
 		const merged: unknown[] = [];
@@ -151,7 +177,7 @@ export function appendProjectLocalRules(agentDir: string, canonicalDir: string, 
 
 export function removeProjectLocalRules(agentDir: string, canonicalDir: string, rules: Rule[]): void {
 	withLock(agentDir, () => {
-		const map = readFile(agentDir);
+		const map = readFileForWrite(agentDir);
 		const existing = Array.isArray(map[canonicalDir]) ? map[canonicalDir] : [];
 		const removeKeys = new Set(rules.map((entry) => rawListKey(entry)));
 		map[canonicalDir] = existing.filter((entry) => !removeKeys.has(rawListKey(entry)));

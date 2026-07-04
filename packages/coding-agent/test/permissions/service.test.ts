@@ -233,15 +233,18 @@ describe("PermissionService", () => {
 			expect(req.alwaysAllowChoices.some((c) => c.rules[0].specifier === "/src/**")).toBe(true);
 		});
 
-		it("labels root-wide mutate choices as workspace access", () => {
+		it("does not offer a whole-workspace (/**) widen for a root-level file", () => {
 			const svc = make();
 			const snap = svc.buildSnapshot("write", { path: "foo.ts", content: "new\n" });
 			const req = svc.buildApprovalRequest(snap, { path: "foo.ts", content: "new\n" }, [
 				{ tool: "write", specifier: join(cwd, "foo.ts"), list: "allow" },
 			]);
 
-			const wide = req.alwaysAllowChoices.find((choice) => choice.rules[0].specifier === "/**");
-			expect(wide?.label).toBe("Always allow edits in this workspace");
+			// Editing a root-level file would widen to `/**` (the entire workspace),
+			// which is far broader than the resource — that choice must not be offered.
+			expect(req.alwaysAllowChoices.some((choice) => choice.rules[0].specifier === "/**")).toBe(false);
+			// The exact single-file allow is still there.
+			expect(req.alwaysAllowChoices.some((choice) => choice.rules[0].specifier === "/foo.ts")).toBe(true);
 		});
 
 		it("passes bash specifiers through unchanged and flags circuit-breaker danger", () => {

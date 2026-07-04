@@ -24,6 +24,8 @@ export interface CommandAccess {
 	readPaths: string[];
 	mutatePaths: string[];
 	readonly: boolean;
+	/** True for pure deletions (rm/rmdir); an "edit" allow rule must not authorize these. */
+	deletesPaths?: boolean;
 	circuitBreakerReason?: string;
 	highRiskReason?: string;
 }
