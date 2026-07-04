@@ -177,6 +177,18 @@ describe("PermissionService", () => {
 			expect(req.display.diffPreview).toContain("+1 new");
 		});
 
+		it("warns when a write approval overwrites an existing file too large to diff", () => {
+			writeFileSync(join(cwd, "large.txt"), "x".repeat(1024 * 1024 + 1), "utf8");
+			const svc = make();
+			const args = { path: "large.txt", content: "replacement\n" };
+			const req = svc.buildApprovalRequest(svc.buildSnapshot("write", args), args, []);
+
+			expect(req.display.diffPreview).toContain("overwrites existing 1048577-byte file");
+			expect(req.display.diffPreview).toContain("current content too large to diff");
+			expect(req.display.diffPreview).toContain("+1 replacement");
+			expect(req.display.diffTruncated).toBe(true);
+		});
+
 		it("keeps full write previews for the UI to expand", () => {
 			const svc = make();
 			const content = Array.from({ length: 25 }, (_, index) => `line ${index + 1}`).join("\n");

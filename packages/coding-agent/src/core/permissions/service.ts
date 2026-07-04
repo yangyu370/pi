@@ -493,9 +493,14 @@ export class PermissionService {
 		const nextContent = contentLimit.text;
 		const absolutePath = resolve(this.cwd, path);
 		try {
-			if (statSync(absolutePath).size > DIFF_PREVIEW_MAX_BYTES) {
+			const existingSize = statSync(absolutePath).size;
+			if (existingSize > DIFF_PREVIEW_MAX_BYTES) {
+				// The file exists and is too large to diff cheaply. Never render it as
+				// an empty base (that reads as a brand-new file); say plainly that an
+				// existing file is being overwritten and its content replaced.
+				const notice = `(overwrites existing ${existingSize}-byte file; current content too large to diff — it will be replaced)`;
 				return {
-					diffPreview: generateDiffString("", nextContent, 2).diff,
+					diffPreview: `${notice}\n${generateDiffString("", nextContent, 2).diff}`,
 					diffTruncated: true,
 				};
 			}

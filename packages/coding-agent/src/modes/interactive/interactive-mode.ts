@@ -408,12 +408,12 @@ export class InteractiveMode {
 	private recordPermissionApproval(resolution: PermissionApprovalResolution): void {
 		const { outcome, display, persistResult } = resolution;
 		if (outcome.type === "allow-once") {
-			this.showStatus(`approved: ${display.title}`);
+			this.appendPermissionRecord(`approved: ${display.title}`);
 			return;
 		}
 		if (outcome.type === "deny") {
 			const reason = outcome.reason ? ` - "${outcome.reason}"` : "";
-			this.showStatus(`denied: ${display.title}${reason}`);
+			this.appendPermissionRecord(`denied: ${display.title}${reason}`);
 			return;
 		}
 
@@ -422,7 +422,18 @@ export class InteractiveMode {
 			persistResult === "persisted"
 				? " - saved to project rules"
 				: " - active for this session only (failed to save)";
-		this.showStatus(`always-allowed: ${rules}${suffix}`);
+		this.appendPermissionRecord(`always-allowed: ${rules}${suffix}`);
+	}
+
+	/**
+	 * Appends a permanent approval-audit line to the chat. Unlike showStatus this
+	 * never collapses into (or gets overwritten by) an adjacent status line, so a
+	 * run of consecutive approvals each leaves its own record.
+	 */
+	private appendPermissionRecord(message: string): void {
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(theme.fg("dim", message), 1, 0));
+		this.ui.requestRender();
 	}
 
 	constructor(runtimeHost: AgentSessionRuntime, options: InteractiveModeOptions = {}) {
@@ -1682,9 +1693,11 @@ export class InteractiveMode {
 		this.unsubscribe?.();
 		this.unsubscribe = undefined;
 		this.applyRuntimeSettings();
-		// The reloaded session is a fresh instance with no provider — re-inject so prompts keep working.
+		// The reloaded session is a fresh instance with no provider/observer — re-inject
+		// both, so prompts keep working AND approvals keep being recorded (audit trail).
 		if (this.approvalProvider) {
 			this.session.setApprovalProvider(this.approvalProvider);
+			this.session.setPermissionApprovalObserver((resolution) => this.recordPermissionApproval(resolution));
 		}
 		if (options.renderBeforeBind) {
 			this.renderCurrentSessionState();
@@ -4318,6 +4331,9 @@ export class InteractiveMode {
 				onDelete: (rules) => {
 					try {
 						this.session.removeProjectLocalPermissionRules(rules);
+						// Re-read the merged effective set so a rule that still applies via a
+						// lower-priority scope resurfaces instead of silently looking deleted.
+						selector.refresh(this.session.listPermissionRules());
 						this.showStatus("Permission rule deleted");
 					} catch (error) {
 						this.showError(

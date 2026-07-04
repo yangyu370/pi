@@ -67,6 +67,45 @@ describe("PermissionRulesSelectorComponent", () => {
 		expect(onDelete).toHaveBeenCalledWith([rule("project-local", "bash(project *)")]);
 	});
 
+	it("refresh replaces rules and clears a pending delete confirmation", () => {
+		const selector = new PermissionRulesSelectorComponent({
+			projectPath: "/repo",
+			rules: [rule("project-local", "bash(project *)")],
+			onDelete: () => {},
+			onCancel: () => {},
+		});
+
+		selector.handleInput("d");
+		selector.refresh([rule("cli", "bash(cli *)")]);
+
+		const output = stripAnsi(selector.render(120).join("\n"));
+		expect(output).toContain("allow bash(cli *) (read-only here)");
+		expect(output).not.toContain("allow bash(project *)");
+		expect(output).not.toContain("delete? (y/n)");
+	});
+
+	it("does not rerender after the host refreshes a confirmed delete", () => {
+		let selector: PermissionRulesSelectorComponent;
+		const onDelete = vi.fn(() => {
+			selector.refresh([rule("cli", "bash(project *)")]);
+		});
+		selector = new PermissionRulesSelectorComponent({
+			projectPath: "/repo",
+			rules: [rule("project-local", "bash(project *)")],
+			onDelete,
+			onCancel: () => {},
+		});
+		const updateList = vi.spyOn(selector as unknown as { updateList(): void }, "updateList");
+
+		selector.handleInput("d");
+		updateList.mockClear();
+		selector.handleInput("y");
+
+		expect(onDelete).toHaveBeenCalledOnce();
+		expect(updateList).toHaveBeenCalledOnce();
+		expect(stripAnsi(selector.render(120).join("\n"))).toContain("allow bash(project *) (read-only here)");
+	});
+
 	it("does not delete read-only rules", () => {
 		const onDelete = vi.fn();
 		const selector = new PermissionRulesSelectorComponent({

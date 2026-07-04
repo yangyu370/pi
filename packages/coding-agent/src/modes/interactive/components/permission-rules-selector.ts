@@ -117,8 +117,13 @@ export class PermissionRulesSelectorComponent extends Container {
 	private confirmDelete(): void {
 		const item = this.selectedItem();
 		if (!item || item.rule.scope !== "project-local") return;
+		this.confirmingDelete = false;
 		this.onDelete([item.rule]);
-		this.rules = this.rules.filter((_, index) => index !== item.index);
+	}
+
+	/** Replaces the displayed rules with a freshly merged effective set (host-driven after a delete). */
+	refresh(rules: Rule[]): void {
+		this.rules = rules;
 		this.confirmingDelete = false;
 		this.updateList();
 	}
