@@ -401,7 +401,7 @@ export class PermissionService {
 				const wide = widenToDirectory(specifier);
 				choices.push({
 					id: `allow-${id++}`,
-					label: `Always allow edits under \`${wide}\``,
+					label: wide === "/**" ? "Always allow edits in this workspace" : `Always allow edits under \`${wide}\``,
 					rules: [makeSuggestedRule(s.tool, wide)],
 				});
 			}

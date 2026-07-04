@@ -233,6 +233,17 @@ describe("PermissionService", () => {
 			expect(req.alwaysAllowChoices.some((c) => c.rules[0].specifier === "/src/**")).toBe(true);
 		});
 
+		it("labels root-wide mutate choices as workspace access", () => {
+			const svc = make();
+			const snap = svc.buildSnapshot("write", { path: "foo.ts", content: "new\n" });
+			const req = svc.buildApprovalRequest(snap, { path: "foo.ts", content: "new\n" }, [
+				{ tool: "write", specifier: join(cwd, "foo.ts"), list: "allow" },
+			]);
+
+			const wide = req.alwaysAllowChoices.find((choice) => choice.rules[0].specifier === "/**");
+			expect(wide?.label).toBe("Always allow edits in this workspace");
+		});
+
 		it("passes bash specifiers through unchanged and flags circuit-breaker danger", () => {
 			const svc = make();
 			const snap = svc.buildSnapshot("bash", { command: "rm -rf ~" });
