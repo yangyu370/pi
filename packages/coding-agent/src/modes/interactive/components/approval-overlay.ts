@@ -9,9 +9,7 @@ import { keyHint, keyText, rawKeyHint } from "./keybinding-hints.ts";
 const DENY_REASON = "Denied by user";
 const MAX_DETAIL_LINES = 2;
 const MAX_DANGER_LINES = 1;
-/** Collapsed diff budget; expanded is clamped by terminal height instead. */
 const COLLAPSED_DIFF_LINES = 3;
-/** Fixed overlay rows around the diff: borders, title, question, options, hints. */
 const OVERLAY_CHROME_ROWS = 18;
 const FALLBACK_TERMINAL_ROWS = 24;
 const DENY_LABEL = "No, tell pi what to do differently";
@@ -34,7 +32,6 @@ export interface ApprovalOverlayOptions {
 	request: PermissionApprovalRequest;
 	onSubmit: (outcome: PermissionApprovalOutcome) => void;
 	onCancel: () => void;
-	/** Current terminal height; expanded diffs are clamped so controls stay visible. */
 	terminalRows?: () => number;
 	now?: () => number;
 }
@@ -112,7 +109,6 @@ function truncateDiff(text: string, expanded: boolean, terminalRows: number | un
 	const lines = text.split("\n");
 	const toggleKey = keyText("app.permission.diff.toggle") || "ctrl+e";
 	if (expanded) {
-		// Even expanded, the diff must not push the decision controls off-screen.
 		const budget = Math.max(COLLAPSED_DIFF_LINES, (terminalRows ?? FALLBACK_TERMINAL_ROWS) - OVERLAY_CHROME_ROWS);
 		if (lines.length <= budget) {
 			return [...lines, `(${toggleKey} to collapse)`];
@@ -154,8 +150,6 @@ function isPrintableInput(keyData: string): boolean {
 	if (keyData.length === 0) {
 		return false;
 	}
-	// Pasted text and IME commits arrive as multi-char chunks; accept them
-	// wholesale as long as they carry no control characters.
 	for (const char of keyData) {
 		if (char < " " || char === "\x7f") {
 			return false;

@@ -121,7 +121,6 @@ export class PermissionRulesSelectorComponent extends Container {
 		this.onDelete([item.rule]);
 	}
 
-	/** Replaces the displayed rules with a freshly merged effective set (host-driven after a delete). */
 	refresh(rules: Rule[]): void {
 		this.rules = rules;
 		this.confirmingDelete = false;

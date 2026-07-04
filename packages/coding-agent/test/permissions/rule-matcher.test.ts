@@ -24,6 +24,12 @@ describe("matchBashCommand", () => {
 		expect(matchBashCommand("git push:*", "git push origin main")).toBe(true);
 		expect(matchBashCommand("git push:*", "git pushx")).toBe(false); // requires the boundary
 	});
+	it("trailing ' *'/:* also matches the bare base command (so 'always allow X' re-matches X)", () => {
+		expect(matchBashCommand("npm install *", "npm install")).toBe(true);
+		expect(matchBashCommand("npm install *", "npm install --save")).toBe(true);
+		expect(matchBashCommand("git push:*", "git push")).toBe(true);
+		expect(matchBashCommand("npm install *", "npm installx")).toBe(false); // still needs the boundary
+	});
 	it("a colon elsewhere is literal", () => {
 		expect(matchBashCommand("foo:bar", "foo:bar")).toBe(true);
 		expect(matchBashCommand("foo:bar", "foo bar")).toBe(false);

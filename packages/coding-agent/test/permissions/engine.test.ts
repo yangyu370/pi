@@ -307,6 +307,20 @@ describe("suggestBashSpecifier", () => {
 		if (res.kind !== "command") throw new Error("expected command");
 		expect(suggestBashSpecifier(res.accesses[0])).toBe("git push *");
 	});
+
+	it("empty/degenerate command → no suggestion (never offers allow-all bash(*))", () => {
+		const res = extractResource("bash", { command: "   " });
+		if (res.kind !== "command") throw new Error("expected command");
+		expect(suggestBashSpecifier(res.accesses[0])).toBeUndefined();
+	});
+});
+
+describe("engine.check — empty command", () => {
+	it("asks but offers no allow-all suggestion for an empty bash command", () => {
+		const res = check(snap({ tool: "bash", resource: bash("   "), mode: "default" }));
+		expect(res.decision).toBe("ask");
+		expect(res.suggestedRules ?? []).toEqual([]);
+	});
 });
 
 describe("engine.check — totality", () => {

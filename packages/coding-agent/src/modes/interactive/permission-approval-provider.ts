@@ -21,10 +21,6 @@ interface PendingApproval {
 	settled: boolean;
 }
 
-/**
- * Bridges the permission approval contract to the TUI overlay.
- * Concurrent asks are serialized, and failures resolve to deny instead of rejecting.
- */
 export class InteractiveApprovalProvider implements PermissionApprovalProvider {
 	private readonly host: ApprovalOverlayHost;
 	private readonly now: (() => number) | undefined;
@@ -107,7 +103,7 @@ export class InteractiveApprovalProvider implements PermissionApprovalProvider {
 		try {
 			pending.handle?.hide();
 		} catch {
-			// Approval resolution must not depend on overlay teardown succeeding.
+			// ignore
 		}
 	}
 }

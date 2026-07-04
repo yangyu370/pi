@@ -1,7 +1,3 @@
-/**
- * Barrel for the permission layer core module.
- */
-
 export * from "./command-analyzer.ts";
 export * from "./engine.ts";
 export * from "./rule-matcher.ts";

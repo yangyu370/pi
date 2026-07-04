@@ -275,9 +275,11 @@ describe("PermissionService", () => {
 				]),
 			).resolves.toBe("session-only");
 			expect(logged.length).toBeGreaterThan(0);
-			// The kept-in-session rule now participates in snapshots.
+			// The kept-in-session rule now participates in snapshots, labelled as a session rule.
 			const snap = svc.buildSnapshot("edit", { path: "x.ts", edits: [] });
-			expect(snap.rules.some((r) => r.raw === "edit(/x.ts)")).toBe(true);
+			const kept = snap.rules.find((r) => r.raw === "edit(/x.ts)");
+			expect(kept).toBeDefined();
+			expect(kept?.scope).toBe("session");
 		});
 
 		it("returns persisted when project-local rules are saved", async () => {
